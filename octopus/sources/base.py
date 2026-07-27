@@ -37,7 +37,9 @@ class Source(ABC):
     def __init__(self, http: Http, config: dict | None = None) -> None:
         self.http = http
         self.config = config or {}
-        self.limit = int(self.config.get("limit", 30))
+        # 单源条数上限。0（或负数）表示不限——抓取并通过时间校验的
+        # 条目全量进入推送，一条不漏。
+        self.limit = int(self.config.get("limit", 0) or 0)
 
     # ------------------------------------------------------------------
     @abstractmethod
@@ -91,7 +93,7 @@ class Source(ABC):
                 continue
 
             result.items.append(item)
-            if len(result.items) >= self.limit:
+            if self.limit > 0 and len(result.items) >= self.limit:
                 break
 
         result.items.sort(key=lambda i: i.published_at or ref, reverse=True)

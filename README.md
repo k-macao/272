@@ -108,11 +108,15 @@ git add .github/workflows && git commit -m "启用定时抓取" && git push
 ```yaml
 window_minutes: 180        # 时间窗口
 interval_minutes: 30       # 循环间隔
-max_items_per_source: 8    # 单源条数上限，防止公告刷屏淹没其它源
-max_items_total: 60        # 单条推送总条数上限
+max_items_per_source: 0    # 单源条数上限；0 = 不限，抓取内容全量进推送
+max_items_total: 0         # 单条推送总条数上限；0 = 不限（一条推送含全部抓取内容）
 push_when_empty: true      # 无新增时仍推一条"本轮无新增"播报
 disabled_sources: []       # 临时关掉某些源，如 [datayes, hibor]
 ```
+
+> 默认配置下**一条推送包含全部抓取内容**——没有单源截断、没有总条数上限，
+> 唯一的筛选仍是时间校验（无时间戳/未来时间/超出窗口的一律丢弃）与跨轮去重。
+> 哪天觉得刷屏了，把两个上限改回正整数（如 8 / 60）即可恢复截断。
 
 常用命令行参数：
 
@@ -136,7 +140,7 @@ octopus/
 ├── notify.py         # PushPlus 推送
 ├── agent.py          # 主流程编排
 └── sources/          # 十个源，各自独立
-tests/                # 96 个测试，全离线
+tests/                # 105 个测试，全离线
 └── fixtures/         # 真实接口响应样本
 ```
 
@@ -146,7 +150,7 @@ tests/                # 96 个测试，全离线
 python -m unittest discover -s tests -t . -v
 ```
 
-96 个测试全部离线运行（用真实抓取的响应样本做 fixture），不依赖网络。覆盖时间解析的各种畸形格式、过滤逻辑、去重、降级路径、HTML 转义与端到端流程。
+105 个测试全部离线运行（用真实抓取的响应样本做 fixture），不依赖网络。覆盖时间解析的各种畸形格式、过滤逻辑、去重、降级路径、HTML 转义、条数上限语义（0 = 全量）与端到端流程。
 
 ---
 
