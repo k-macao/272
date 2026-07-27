@@ -1,0 +1,23 @@
+# 运行时产物
+state/
+preview.html
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# 本地密钥（切勿提交）
+.env
+secrets.yml
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
