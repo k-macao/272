@@ -191,6 +191,30 @@ class TestAgentFlow(AgentTestCase):
         report = self._agent(cfg).run_once(ref=REF)
         self.assertEqual(report.total, 12)
 
+    def test_zero_caps_push_everything(self):
+        """上限置 0 = 不限：一条推送包含全部抓取内容，一条不漏。"""
+        REGISTRY["a"] = make_source("a", "源A", [f"新闻{i}" for i in range(15)])
+        REGISTRY["b"] = make_source("b", "源B", [f"消息{i}" for i in range(12)])
+
+        cfg = self._config(max_items_per_source=0, max_items_total=0)
+        report = self._agent(cfg).run_once(ref=REF)
+
+        self.assertEqual(report.total, 27)
+        self.assertTrue(report.pushed)
+        self.assertEqual(len(RecordingPush.sent), 1)  # 仍然只有一条推送
+        titles = {i.title for _, items in report.groups for i in items}
+        self.assertIn("新闻14", titles)
+        self.assertIn("消息11", titles)
+
+    def test_per_source_limit_zero_means_unlimited(self):
+        """源级 limit=0 时不截断，全部通过时间校验的条目都保留。"""
+        REGISTRY["a"] = make_source("a", "源A", [f"新闻{i}" for i in range(20)])
+
+        cfg = self._config(max_items_per_source=3, max_items_total=0)
+        cfg.sources = {"a": {"limit": 0}}  # 该源显式覆盖为不限
+        report = self._agent(cfg).run_once(ref=REF)
+        self.assertEqual(report.total, 20)
+
     def test_disabled_source_skipped(self):
         REGISTRY["a"] = make_source("a", "源A", ["A的新闻"])
         REGISTRY["b"] = make_source("b", "源B", ["B的新闻"])

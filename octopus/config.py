@@ -13,8 +13,10 @@ DEFAULTS: dict[str, Any] = {
     # 抓取间隔 30 分钟，窗口放宽到 180 分钟，配合去重避免边界漏推
     "window_minutes": 180,
     "interval_minutes": 30,
-    "max_items_per_source": 8,
-    "max_items_total": 60,
+    # 条数上限一律 0 = 不限：一条推送包含全部通过时间校验的抓取内容。
+    # 代码兜底默认也遵循这个语义；想限量时在 config.yml 里填正整数。
+    "max_items_per_source": 0,
+    "max_items_total": 0,
     "push_when_empty": True,
     "state_file": "state/seen.json",
     "timeout": 15,
@@ -28,8 +30,8 @@ DEFAULTS: dict[str, Any] = {
 class Config:
     window_minutes: int = 180
     interval_minutes: int = 30
-    max_items_per_source: int = 8
-    max_items_total: int = 60
+    max_items_per_source: int = 0  # 0 = 单源不限条数
+    max_items_total: int = 0       # 0 = 整条推送不限总条数
     push_when_empty: bool = True
     state_file: str = "state/seen.json"
     timeout: float = 15.0

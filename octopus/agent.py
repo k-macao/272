@@ -51,16 +51,20 @@ class Agent:
 
         results = self._collect_all(ref)
 
-        # 按注册表顺序整理分组，并施加全局条数上限
+        # 按注册表顺序整理分组，并施加全局条数上限。
+        # max_items_total <= 0 表示不限——所有通过时间校验的抓取内容
+        # 全量塞进同一条推送，一条不漏。
         groups: list[tuple[SourceResult, list[Item]]] = []
         by_name = {r.source: r for r in results}
         budget = self.config.max_items_total
+        capped = budget > 0
         for name in REGISTRY:
             result = by_name.get(name)
             if not result or not result.items:
                 continue
-            take = result.items[: max(0, budget)]
-            budget -= len(take)
+            take = result.items[:budget] if capped else result.items
+            if capped:
+                budget -= len(take)
             if take:
                 groups.append((result, take))
 

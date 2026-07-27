@@ -7,11 +7,12 @@ window_minutes: 180
 # 循环模式下的抓取间隔
 interval_minutes: 30
 
-# 每个源单轮最多推几条（防止公告刷屏淹没其它源）
-max_items_per_source: 8
+# 每个源单轮最多推几条。0 = 不限：通过时间校验的条目全量进入推送。
+# 想防刷屏时改回正整数（如 8）即可。
+max_items_per_source: 0
 
-# 单条推送的总条数上限
-max_items_total: 60
+# 单条推送的总条数上限。0 = 不限：一条推送包含全部抓取内容。
+max_items_total: 0
 
 # 本轮无新增时是否仍推送一条"无新增"播报
 push_when_empty: true
@@ -26,32 +27,19 @@ retries: 2
 # 需要临时关掉的源，填源名即可，如：[datayes, hibor]
 disabled_sources: []
 
-# 各源的细粒度参数
+# 各源的细粒度参数。
+# 注意：这里不再给单源设 limit（默认跟随 max_items_per_source: 0，即全量）。
+# 如需给某个源单独限量，加一行 limit: N 即可；limit: 0 表示该源不限。
+# 下面的 *_top 是"榜单取前几名"的抓取口径，不是推送截断，保留原值。
 sources:
   iwencai:
-    limit: 8
     hot_top: 8          # 人气榜取前几名
   eastmoney:
-    limit: 10
     page_size: 30
-  stockstar:
-    limit: 8
-  cninfo:
-    limit: 10
   ifind:
-    limit: 4
     board_top: 6        # 板块热力取前几个行业
     slot_minutes: 30    # 快照时间对齐粒度
   jisilu:
-    limit: 8
     move_threshold: 5.0 # 转债涨跌幅异动阈值(%)
     mover_top: 6
     dblow_top: 5        # 双低榜取前几只
-  mybbond:
-    limit: 6
-  hibor:
-    limit: 6
-  stats:
-    limit: 5
-  datayes:
-    limit: 5
