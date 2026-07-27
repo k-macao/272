@@ -1,0 +1,26 @@
+name: 测试
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 运行单元测试（全离线，不发网络请求）
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: 校验各源模块可正常导入
+        run: python -c "from octopus.sources import REGISTRY; assert len(REGISTRY)==10, REGISTRY; print('10 个源全部就绪:', ', '.join(REGISTRY))"
