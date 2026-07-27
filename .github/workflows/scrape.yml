@@ -75,3 +75,7 @@ jobs:
         if: always() && github.event.inputs.dry_run == 'true'
         uses: actions/upload-artifact@v4
         with:
+          name: preview
+          path: preview.html
+          if-no-files-found: ignore
+          retention-days: 3
