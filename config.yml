@@ -1,0 +1,57 @@
+# 章鱼 AI · 抓取智能体配置
+# 敏感信息（PUSHPLUS_TOKEN）请用环境变量或 GitHub Secrets 提供，不要写在这里。
+
+# 时间窗口：只推送发布时间落在最近 N 分钟内的条目
+window_minutes: 180
+
+# 循环模式下的抓取间隔
+interval_minutes: 30
+
+# 每个源单轮最多推几条（防止公告刷屏淹没其它源）
+max_items_per_source: 8
+
+# 单条推送的总条数上限
+max_items_total: 60
+
+# 本轮无新增时是否仍推送一条"无新增"播报
+push_when_empty: true
+
+# 去重状态文件（相对项目根目录）
+state_file: state/seen.json
+
+# 网络参数
+timeout: 15
+retries: 2
+
+# 需要临时关掉的源，填源名即可，如：[datayes, hibor]
+disabled_sources: []
+
+# 各源的细粒度参数
+sources:
+  iwencai:
+    limit: 8
+    hot_top: 8          # 人气榜取前几名
+  eastmoney:
+    limit: 10
+    page_size: 30
+  stockstar:
+    limit: 8
+  cninfo:
+    limit: 10
+  ifind:
+    limit: 4
+    board_top: 6        # 板块热力取前几个行业
+    slot_minutes: 30    # 快照时间对齐粒度
+  jisilu:
+    limit: 8
+    move_threshold: 5.0 # 转债涨跌幅异动阈值(%)
+    mover_top: 6
+    dblow_top: 5        # 双低榜取前几只
+  mybbond:
+    limit: 6
+  hibor:
+    limit: 6
+  stats:
+    limit: 5
+  datayes:
+    limit: 5
