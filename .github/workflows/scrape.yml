@@ -31,10 +31,10 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -43,7 +43,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: 恢复去重状态
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: state
           key: octopus-state-${{ github.run_id }}
@@ -66,14 +66,14 @@ jobs:
 
       - name: 保存去重状态
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: state
           key: octopus-state-${{ github.run_id }}
 
       - name: 上传预览（仅 dry-run）
         if: always() && github.event.inputs.dry_run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: preview
           path: preview.html
