@@ -73,7 +73,7 @@ jobs:
 
       - name: 上传预览（仅 dry-run）
         if: always() && github.event.inputs.dry_run == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: preview
           path: preview.html
