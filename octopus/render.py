@@ -226,9 +226,9 @@ def render_manual(
     *,
     ref: datetime,
     ai_summary: str = "",
-    ai_model: str = "GLM-4",
+    ai_model: str = "DeepSeek-V4",
 ) -> str:
-    """把人工录入的 AI 分析主题/内容（可选搭配智谱大模型提炼）渲染成推送正文。"""
+    """把人工录入的 AI 分析主题/内容（可选搭配 DeepSeek 大模型提炼）渲染成推送正文。"""
     topic = (topic or "").strip()
     content = (content or "").strip()
     ai_summary = (ai_summary or "").strip()
@@ -252,7 +252,7 @@ def render_manual(
 
 def _manual_header(ref: datetime, ai_model: str = "") -> str:
     sub = (
-        f"智谱大模型提炼（{html.escape(ai_model)}） · 人工录入 · 发布时间 {stamp(ref)}（北京时间）"
+        f"DeepSeek 大模型提炼（{html.escape(ai_model)}） · 人工录入 · 发布时间 {stamp(ref)}（北京时间）"
         if ai_model
         else f"人工录入内容 · 发布时间 {stamp(ref)}（北京时间）"
     )
@@ -269,7 +269,7 @@ def _manual_header(ref: datetime, ai_model: str = "") -> str:
 
 
 def _manual_ai_card(ai_summary: str, ai_model: str) -> str:
-    title = f"✨ 智谱 AI 智能提炼 · 分类与摘要 ({html.escape(ai_model)})"
+    title = f"✨ DeepSeek AI 智能提炼 · 分类与摘要 ({html.escape(ai_model)})"
     body = html.escape(ai_summary).replace("\n", "<br>")
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'

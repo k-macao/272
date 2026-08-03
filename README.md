@@ -135,9 +135,9 @@ python main.py --verbose                # 调试日志
 除了定时抓取，也可以**人工录入一段 AI 分析内容**（主题 + 正文），
 用同一套浅灰底深蓝字样式渲染成独立推送发到微信，不经过抓取/时间校验/去重。
 
-> **智谱大模型智能提炼**：如在环境变量或 `config.yml` 中配置了 `ZHIPU_API_KEY`（智谱 AI 大模型 API Key），
-> 无论是网页录入、命令行还是 GitHub Actions 手动执行，系统都会**自动调用智谱 API (`glm-4-flash`)**
-> 对您输入的主题和内容进行深度提炼、分类和摘要，最终组合成为包含「✨ 智谱 AI 智能提炼」与「📝 原始录入内容」
+> **DeepSeek 大模型智能提炼**：如在环境变量或 `config.yml` 中配置了 `DEEPSEEK_API_KEY`（DeepSeek 大模型 API Key），
+> 无论是网页录入、命令行还是 GitHub Actions 手动执行，系统都会**自动调用 DeepSeek API (`deepseek-v4-flash`)**
+> 对您输入的主题和内容进行深度提炼、分类和摘要，最终组合成为包含「✨ DeepSeek AI 智能提炼」与「📝 原始录入内容」
 > 两个卡片于一体的精美微信推文！
 
 > **一对一**：手动推送恒为 PushPlus **个人推送**——只发给 token 所属账号本人，
@@ -199,7 +199,7 @@ octopus/
 ├── models.py         # Item / SourceResult / TimeQuality
 ├── state.py          # 跨轮次去重（原子写入）
 ├── http.py           # 重试、超时、UA 伪装
-├── ai.py             # 智谱 AI 大模型提炼、分类与摘要（用于手动推送）
+├── ai.py             # DeepSeek 大模型提炼、分类与摘要（用于手动推送）
 ├── render.py         # 浅灰底 + 深蓝字的 HTML 渲染
 ├── notify.py         # PushPlus 推送
 ├── agent.py          # 主流程编排
@@ -215,7 +215,7 @@ tests/                # 129 个测试，全离线
 python -m unittest discover -s tests -t . -v
 ```
 
-129 个测试全部离线运行（用真实抓取的响应样本做 fixture），不依赖网络。覆盖时间解析的各种畸形格式、过滤逻辑、去重、降级路径、HTML 转义、条数上限语义（0 = 全量）、手动主题分析推送（一对一语义 / 独立网页 / 令牌保护 / 智谱大模型提炼与摘要）与端到端流程。
+129 个测试全部离线运行（用真实抓取的响应样本做 fixture），不依赖网络。覆盖时间解析的各种畸形格式、过滤逻辑、去重、降级路径、HTML 转义、条数上限语义（0 = 全量）、手动主题分析推送（一对一语义 / 独立网页 / 令牌保护 / DeepSeek 大模型提炼与摘要）与端到端流程。
 
 ---
 

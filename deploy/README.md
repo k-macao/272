@@ -29,8 +29,8 @@ git push
 | `PUSHPLUS_TOKEN` | `26614f5b8a874aab9ad4791555079520` | ✅ |
 | `PUSHPLUS_TOPIC` | 群组编码，只发给自己就不用建 | ❌ |
 | `DATAYES_TOKEN` | 萝卜投研 Cloud-Sso-Token | ❌ |
-| `ZHIPU_API_KEY` | 智谱 AI 大模型 API Key（用于手动主题分析提炼与摘要） | ❌ |
-| `ZHIPU_MODEL` | 智谱模型名（默认 `glm-4-flash`） | ❌ |
+| `DEEPSEEK_API_KEY` | DeepSeek 大模型 API Key（用于手动主题分析提炼与摘要） | ❌ |
+| `DEEPSEEK_MODEL` | DeepSeek 模型名（默认 `deepseek-v4-flash`） | ❌ |
 
 > 没配 `DATAYES_TOKEN` 时萝卜投研会自动降级为东财"机构盈利预测"，
 > 推送页脚会如实标注，不影响其余九个源。
@@ -53,7 +53,8 @@ git push
 2. 表单里填 `topic`（主题标题，可选）和 `content`（分析内容，支持多行粘贴）；
 3. `dry_run` 选 `true` 可以先出预览（Artifacts 下载 `preview.html`），确认后改回 `false` 正式推送。
 
-> 如在 Secrets 配置了 `ZHIPU_API_KEY`，会自动调用智谱大模型提炼分类和摘要，再组合推送到微信。
+> 如在 Secrets 配置了 `DEEPSEEK_API_KEY`，会自动调用 DeepSeek 大模型提炼分类和摘要，再组合推送到微信。
+> （旧的 `ZHIPU_API_KEY` 仍会被回落读取，兼容未改名的历史 Secret。）
 该 workflow 只传 `PUSHPLUS_TOKEN`，不传 `PUSHPLUS_TOPIC`，保证一对一。
 
 **方式二 · 独立网页页面（本地/服务器）**
