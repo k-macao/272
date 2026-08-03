@@ -38,8 +38,8 @@ class Config:
     retries: int = 2
     pushplus_token: str = ""
     pushplus_topics: list[str] = field(default_factory=list)
-    zhipu_api_key: str = ""
-    zhipu_model: str = "glm-4-flash"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-v4-flash"
     sources: dict[str, dict] = field(default_factory=dict)
     disabled_sources: list[str] = field(default_factory=list)
 
@@ -87,11 +87,22 @@ class Config:
             retries=int(data["retries"]),
             pushplus_token=os.getenv("PUSHPLUS_TOKEN", str(data.get("pushplus_token", ""))).strip(),
             pushplus_topics=Config._load_pushplus_topics(data),
-            zhipu_api_key=os.getenv(
-                "ZHIPU_API_KEY",
-                os.getenv("ZHIPUAI_API_KEY", os.getenv("BIGMODEL_API_KEY", str(data.get("zhipu_api_key", ""))))
+            # DeepSeek API Key：优先 DEEPSEEK_API_KEY，回落到旧的智谱密钥名，
+            # 兼容尚未改名的历史 Secret / 本地 .env，避免切换期间手动推送 AI 失效。
+            deepseek_api_key=os.getenv(
+                "DEEPSEEK_API_KEY",
+                os.getenv(
+                    "ZHIPU_API_KEY",
+                    os.getenv("ZHIPUAI_API_KEY", os.getenv("BIGMODEL_API_KEY", str(data.get("deepseek_api_key", data.get("zhipu_api_key", ""))))),
+                ),
             ).strip(),
-            zhipu_model=(os.getenv("ZHIPU_MODEL", str(data.get("zhipu_model", "glm-4-flash"))).strip() or "glm-4-flash"),
+            deepseek_model=(
+                os.getenv(
+                    "DEEPSEEK_MODEL",
+                    os.getenv("ZHIPU_MODEL", str(data.get("deepseek_model", data.get("zhipu_model", "deepseek-v4-flash")))),
+                ).strip()
+                or "deepseek-v4-flash"
+            ),
             sources=dict(data.get("sources") or {}),
             disabled_sources=_as_list(data.get("disabled_sources")),
         )

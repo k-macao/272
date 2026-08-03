@@ -58,10 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="启动独立的手动推送网页（默认 http://127.0.0.1:8765）")
     p.add_argument("--host", default="127.0.0.1", help="网页服务监听地址（默认 127.0.0.1）")
     p.add_argument("--port", type=int, default=8765, help="网页服务端口（默认 8765）")
-    p.add_argument("--zhipu-api-key", default="",
-                   help="智谱大模型 API Key（用于手动推送时进行内容提炼、分类和摘要）")
-    p.add_argument("--zhipu-model", default="",
-                   help="智谱大模型名称（默认 glm-4-flash）")
+    p.add_argument("--deepseek-api-key", default="",
+                   help="DeepSeek 大模型 API Key（用于手动推送时进行内容提炼、分类和摘要）")
+    p.add_argument("--deepseek-model", default="",
+                   help="DeepSeek 大模型名称（默认 deepseek-v4-flash）")
     return p
 
 
@@ -85,10 +85,10 @@ def main(argv: list[str] | None = None) -> int:
         config.window_minutes = args.window
     if args.interval:
         config.interval_minutes = args.interval
-    if args.zhipu_api_key:
-        config.zhipu_api_key = args.zhipu_api_key.strip()
-    if args.zhipu_model:
-        config.zhipu_model = args.zhipu_model.strip()
+    if args.deepseek_api_key:
+        config.deepseek_api_key = args.deepseek_api_key.strip()
+    if args.deepseek_model:
+        config.deepseek_model = args.deepseek_model.strip()
     if args.sources:
         from octopus.sources import REGISTRY
 

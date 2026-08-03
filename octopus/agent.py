@@ -145,22 +145,22 @@ class Agent:
 
     # ------------------------------------------------------------------
     def _refine_manual(self, topic: str, content: str) -> tuple[str, str]:
-        """按需调用智谱大模型 API 提炼主题内容。"""
-        if not self.config.zhipu_api_key or not (content or "").strip():
+        """按需调用 DeepSeek 大模型 API 提炼主题内容。"""
+        if not self.config.deepseek_api_key or not (content or "").strip():
             return "", ""
-        from .ai import ZhipuAI
+        from .ai import DeepSeekAI
 
-        client = ZhipuAI(
-            self.config.zhipu_api_key,
-            model=self.config.zhipu_model,
+        client = DeepSeekAI(
+            self.config.deepseek_api_key,
+            model=self.config.deepseek_model,
             http=self.http,
         )
-        log.info("调用智谱 API (%s) 提炼分类与摘要...", self.config.zhipu_model)
+        log.info("调用 DeepSeek API (%s) 提炼分类与摘要...", self.config.deepseek_model)
         ok, res = client.analyze(topic, content)
         if ok and res:
-            log.info("智谱 API 提炼完成 (%d 字符)", len(res))
-            return res, self.config.zhipu_model
-        log.warning("智谱 API 提炼未成功: %s", res)
+            log.info("DeepSeek API 提炼完成 (%d 字符)", len(res))
+            return res, self.config.deepseek_model
+        log.warning("DeepSeek API 提炼未成功: %s", res)
         return "", ""
 
     def preview_manual(
@@ -171,7 +171,7 @@ class Agent:
         ref: datetime | None = None,
         use_ai: bool = True,
     ) -> str:
-        """生成手动主题分析的预览 HTML 正文（可选带智谱 AI 提炼）。"""
+        """生成手动主题分析的预览 HTML 正文（可选带 DeepSeek AI 提炼）。"""
         ref = ref or now()
         ai_summary, ai_model = self._refine_manual(topic, content) if use_ai else ("", "")
         return render_manual(
@@ -193,7 +193,7 @@ class Agent:
     ) -> RunReport:
         """手动主题分析推送：人工录入内容直接渲染并推送。
 
-        支持自动调用智谱大模型进行提炼、分类或摘要（如配置了 ZHIPU_API_KEY）。
+        支持自动调用 DeepSeek 大模型进行提炼、分类或摘要（如配置了 DEEPSEEK_API_KEY）。
         恒为**一对一**：只推给 token 所属账号本人（PushPlus 个人推送），
         不携带群组 topic，与 config.pushplus_topics（一对多）互不影响。
         """

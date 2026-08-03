@@ -1,7 +1,7 @@
-"""智谱 AI 大模型接口 —— 用于手动主题推送时对输入内容进行深度提炼、分类和摘要.
+"""DeepSeek 大模型接口 —— 用于手动主题推送时对输入内容进行深度提炼、分类和摘要.
 
-直接支持 Zhipu v4 接口（https://open.bigmodel.cn/api/paas/v4/chat/completions），
-使用 Authorization: Bearer <API_KEY> 鉴权，支持 glm-4-flash 等主流智谱模型。
+直接支持 DeepSeek OpenAI 兼容接口（https://api.deepseek.com/chat/completions），
+使用 Authorization: Bearer <API_KEY> 鉴权，支持 deepseek-v4-flash 等主流 DeepSeek 模型。
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ from .http import FetchError, Http
 
 log = logging.getLogger(__name__)
 
-ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
-SYSTEM_PROMPT = """你是一位专业的金融及产业研究分析师和精炼总结专家（章鱼 AI · 智谱大模型提炼引擎）。
+SYSTEM_PROMPT = """你是一位专业的金融及产业研究分析师和精炼总结专家（章鱼 AI · DeepSeek 大模型提炼引擎）。
 请对用户提供的主题与内容进行深度提炼、分类与摘要，输出要求简洁有力、逻辑清晰，便于微信卡片阅读。
 请直接输出以下三个核心模块（不需要输出多余的开场白或客套话）：
 【主题分类】：给出所属分类（如 宏观政策/行业景气/个股异动/行业研报/通用内容 等）与 3-5 个核心关键词
@@ -23,16 +23,16 @@ SYSTEM_PROMPT = """你是一位专业的金融及产业研究分析师和精炼�
 【关键信息提炼】：精炼列举 3-5 点最重要的要点、数据或细节"""
 
 
-class ZhipuAI:
+class DeepSeekAI:
     def __init__(
         self,
         api_key: str,
         *,
-        model: str = "glm-4-flash",
+        model: str = "deepseek-v4-flash",
         http: Http | None = None,
     ) -> None:
         self.api_key = (api_key or "").strip()
-        self.model = (model or "glm-4-flash").strip()
+        self.model = (model or "deepseek-v4-flash").strip()
         self.http = http or Http(timeout=20.0, retries=1)
 
     # ------------------------------------------------------------------
@@ -42,8 +42,8 @@ class ZhipuAI:
         返回 (ok: bool, result_or_err_message: str)。
         """
         if not self.api_key:
-            log.warning("未配置智谱 API Key (ZHIPU_API_KEY)，跳过大模型提炼")
-            return False, "未配置智谱 API Key"
+            log.warning("未配置 DeepSeek API Key (DEEPSEEK_API_KEY)，跳过大模型提炼")
+            return False, "未配置 DeepSeek API Key"
 
         topic_str = (topic or "（未命名主题）").strip()
         content_str = (content or "").strip()
@@ -66,18 +66,18 @@ class ZhipuAI:
         }
 
         try:
-            data = self.http.post_json(ZHIPU_API_URL, payload, headers=headers)
+            data = self.http.post_json(DEEPSEEK_API_URL, payload, headers=headers)
             choices = (data or {}).get("choices") or []
             if not choices:
-                msg = f"智谱 API 返回结构异常：{data}"
+                msg = f"DeepSeek API 返回结构异常：{data}"
                 log.warning(msg)
                 return False, msg
             reply = str(choices[0].get("message", {}).get("content", "")).strip()
             if not reply:
-                log.warning("智谱 API 返回了空的文本结果")
+                log.warning("DeepSeek API 返回了空的文本结果")
                 return False, "大模型未生成有效结果"
             return True, reply
         except Exception as exc:  # noqa: BLE001 - 捕获网络及业务报错，便于上游平滑降级
-            msg = f"智谱 API 调用异常: {exc}"
+            msg = f"DeepSeek API 调用异常: {exc}"
             log.warning(msg)
             return False, msg
