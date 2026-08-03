@@ -10,6 +10,7 @@
     python main.py --manual --topic "机器人板块分析" --content "……"   # 参数直给
     python main.py --manual --topic "机器人板块分析" < analysis.md     # 从文件读内容
     python main.py --manual-web    # 启动独立的手动推送网页 http://127.0.0.1:8765
+    python main.py --check-deepseek --topic "测试" --content "请返回连接成功"  # 只测模型，不推送
 """
 
 from __future__ import annotations
@@ -62,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="DeepSeek 大模型 API Key（用于手动推送时进行内容提炼、分类和摘要）")
     p.add_argument("--deepseek-model", default="",
                    help="DeepSeek 大模型名称（默认 deepseek-v4-flash）")
+    p.add_argument("--deepseek-fallback-models", default="",
+                   help="DeepSeek 降级模型链，逗号分隔；空值使用配置默认值")
+    p.add_argument("--deepseek-thinking", choices=("enabled", "disabled"), default="",
+                   help="V4 思考模式（默认 enabled）")
+    p.add_argument("--check-deepseek", action="store_true",
+                   help="只调用 DeepSeek 并打印结果，不推送；需要 DEEPSEEK_API_KEY")
     return p
 
 
@@ -89,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
         config.deepseek_api_key = args.deepseek_api_key.strip()
     if args.deepseek_model:
         config.deepseek_model = args.deepseek_model.strip()
+    if args.deepseek_fallback_models:
+        config.deepseek_fallback_models = [
+            item.strip() for item in args.deepseek_fallback_models.split(",") if item.strip()
+        ]
+    if args.deepseek_thinking:
+        config.deepseek_thinking = args.deepseek_thinking
     if args.sources:
         from octopus.sources import REGISTRY
 
@@ -99,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         config.disabled_sources = [n for n in REGISTRY if n not in wanted]
 
-    if not config.pushplus_token and not args.dry_run and not args.manual_web:
+    if not config.pushplus_token and not args.dry_run and not args.manual_web and not args.check_deepseek:
         log.error("缺少 PUSHPLUS_TOKEN（环境变量或 config.yml），"
                   "如只想本地预览请加 --dry-run")
         return 2
@@ -112,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.manual_web:
             return _run_manual_web(agent, args, log)
+        if args.check_deepseek:
+            return _run_deepseek_check(agent, args, log)
         if args.manual or args.content is not None or args.topic:
             return _run_manual(agent, args, log)
 
@@ -186,6 +201,31 @@ def _read_manual_input(args) -> tuple[str, str]:
             print("请输入 AI 分析内容（多行，输入完成后按 Ctrl+D 结束）：", flush=True)
         content = sys.stdin.read()
     return topic, content or ""
+
+
+def _run_deepseek_check(agent, args, log: logging.Logger) -> int:
+    """只测 DeepSeek，不依赖 PUSHPLUS_TOKEN，也不产生外部推送。"""
+    from octopus.ai import DeepSeekAI
+
+    topic, content = _read_manual_input(args)
+    if not content.strip():
+        log.error("AI 测试内容为空，无法调用 DeepSeek")
+        return 2
+
+    client = DeepSeekAI(
+        agent.config.deepseek_api_key,
+        model=agent.config.deepseek_model,
+        fallback_models=agent.config.deepseek_fallback_models,
+        thinking=agent.config.deepseek_thinking,
+        http=agent.http,
+    )
+    ok, result = client.analyze(topic, content)
+    if ok:
+        print(f"DeepSeek 调用成功（实际模型：{client.last_model}）")
+        print(result)
+        return 0
+    log.error("DeepSeek 调用失败：%s", result)
+    return 1
 
 
 def _run_manual(agent, args, log: logging.Logger) -> int:

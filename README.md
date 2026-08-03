@@ -136,9 +136,10 @@ python main.py --verbose                # 调试日志
 用同一套浅灰底深蓝字样式渲染成独立推送发到微信，不经过抓取/时间校验/去重。
 
 > **DeepSeek 大模型智能提炼**：如在环境变量或 `config.yml` 中配置了 `DEEPSEEK_API_KEY`（DeepSeek 大模型 API Key），
-> 无论是网页录入、命令行还是 GitHub Actions 手动执行，系统都会**自动调用 DeepSeek API (`deepseek-v4-flash`)**
-> 对您输入的主题和内容进行深度提炼、分类和摘要，最终组合成为包含「✨ DeepSeek AI 智能提炼」与「📝 原始录入内容」
-> 两个卡片于一体的精美微信推文！
+> 无论是网页录入、命令行还是 GitHub Actions 手动执行，系统都会自动调用 DeepSeek API，默认使用
+> `deepseek-v4-flash`，并在明确的“模型不存在/不支持”错误时按 `deepseek_fallback_models` 依次尝试候选模型。
+> V4 的 thinking 模式可用 `DEEPSEEK_THINKING=enabled|disabled` 控制。鉴权、余额、限流和网络错误不会盲目换模型，
+> 以免掩盖真实故障或重复扣费。最终组合成为包含「✨ DeepSeek AI 智能提炼」与「📝 原始录入内容」两个卡片的微信推文！
 
 > **一对一**：手动推送恒为 PushPlus **个人推送**——只发给 token 所属账号本人，
 > **不携带群组 topic**，与 `config.yml` 里的 `pushplus_topics: oai.1`（一对多）互不影响。
@@ -173,8 +174,11 @@ python main.py --manual --topic "机器人板块分析" < analysis.md
 # 终端交互输入（先输主题，再逐行输内容，完成后按 Ctrl+D）
 python main.py --manual
 
-# 只生成预览不推送（写入 preview.html）
+# 只生成预览不推送（仍会调用 DeepSeek，写入 preview.html）
 python main.py --manual --topic "机器人板块分析" --content "……" --dry-run
+
+# 只测试 DeepSeek 调用，不需要 PUSHPLUS_TOKEN，也不会推送
+python main.py --check-deepseek --topic "连接测试" --content "请只回复连接测试成功"
 ```
 
 - `--topic` 是可选的；不给就只推内容，标题显示为「主题」。
@@ -205,7 +209,7 @@ octopus/
 ├── agent.py          # 主流程编排
 ├── webui.py          # 独立的手动推送网页（一对一）
 └── sources/          # 十个源，各自独立
-tests/                # 129 个测试，全离线
+tests/                # 131 个测试，全离线
 └── fixtures/         # 真实接口响应样本
 ```
 

@@ -153,13 +153,20 @@ class Agent:
         client = DeepSeekAI(
             self.config.deepseek_api_key,
             model=self.config.deepseek_model,
+            fallback_models=self.config.deepseek_fallback_models,
+            thinking=self.config.deepseek_thinking,
             http=self.http,
         )
-        log.info("调用 DeepSeek API (%s) 提炼分类与摘要...", self.config.deepseek_model)
+        log.info(
+            "调用 DeepSeek API (%s；降级链：%s；thinking=%s) 提炼分类与摘要...",
+            self.config.deepseek_model,
+            ", ".join(client.fallback_models) or "关闭",
+            client.thinking,
+        )
         ok, res = client.analyze(topic, content)
         if ok and res:
-            log.info("DeepSeek API 提炼完成 (%d 字符)", len(res))
-            return res, self.config.deepseek_model
+            log.info("DeepSeek API 提炼完成 (%d 字符，实际模型=%s)", len(res), client.last_model)
+            return res, client.last_model
         log.warning("DeepSeek API 提炼未成功: %s", res)
         return "", ""
 

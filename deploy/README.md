@@ -26,11 +26,13 @@ git push
 
 | Name | Value | 必填 |
 |---|---|---|
-| `PUSHPLUS_TOKEN` | `26614f5b8a874aab9ad4791555079520` | ✅ |
+| `PUSHPLUS_TOKEN` | PushPlus token（请通过 Secret 配置，不要写入仓库） | ✅ |
 | `PUSHPLUS_TOPIC` | 群组编码，只发给自己就不用建 | ❌ |
 | `DATAYES_TOKEN` | 萝卜投研 Cloud-Sso-Token | ❌ |
 | `DEEPSEEK_API_KEY` | DeepSeek 大模型 API Key（用于手动主题分析提炼与摘要） | ❌ |
 | `DEEPSEEK_MODEL` | DeepSeek 模型名（默认 `deepseek-v4-flash`） | ❌ |
+| `DEEPSEEK_FALLBACK_MODELS` | 模型降级链，逗号分隔（默认 `deepseek-v4-pro,deepseek-chat,deepseek-reasoner`） | ❌ |
+| `DEEPSEEK_THINKING` | V4 思考模式：`enabled` / `disabled`（默认 `enabled`） | ❌ |
 
 > 没配 `DATAYES_TOKEN` 时萝卜投研会自动降级为东财"机构盈利预测"，
 > 推送页脚会如实标注，不影响其余九个源。
@@ -85,6 +87,6 @@ GitHub Actions 的 `schedule` 在整点高峰期常有 5-15 分钟延迟，偶�
 如果你需要**准点**执行，用服务器常驻模式更稳：
 
 ```bash
-export PUSHPLUS_TOKEN=26614f5b8a874aab9ad4791555079520
+export PUSHPLUS_TOKEN=你的PushPlusToken
 nohup python main.py --loop > octopus.log 2>&1 &
 ```

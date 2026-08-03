@@ -9,6 +9,13 @@ from typing import Any
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yml"
 
+DEFAULT_DEEPSEEK_FALLBACK_MODELS = [
+    "deepseek-v4-pro",
+    # 旧别名在 2026-07-24 后已进入退役阶段，仅作为最后兼容尝试。
+    "deepseek-chat",
+    "deepseek-reasoner",
+]
+
 DEFAULTS: dict[str, Any] = {
     # 抓取间隔 30 分钟，窗口放宽到 180 分钟，配合去重避免边界漏推
     "window_minutes": 180,
@@ -40,6 +47,10 @@ class Config:
     pushplus_topics: list[str] = field(default_factory=list)
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-v4-flash"
+    deepseek_fallback_models: list[str] = field(
+        default_factory=lambda: list(DEFAULT_DEEPSEEK_FALLBACK_MODELS)
+    )
+    deepseek_thinking: str = "enabled"
     sources: dict[str, dict] = field(default_factory=dict)
     disabled_sources: list[str] = field(default_factory=list)
 
@@ -103,6 +114,8 @@ class Config:
                 ).strip()
                 or "deepseek-v4-flash"
             ),
+            deepseek_fallback_models=Config._load_deepseek_fallback_models(data),
+            deepseek_thinking=Config._load_deepseek_thinking(data),
             sources=dict(data.get("sources") or {}),
             disabled_sources=_as_list(data.get("disabled_sources")),
         )
@@ -111,6 +124,23 @@ class Config:
         cfg = dict(self.sources.get(name) or {})
         cfg.setdefault("limit", self.max_items_per_source)
         return cfg
+
+    @staticmethod
+    def _load_deepseek_fallback_models(data: dict) -> list[str]:
+        """读取模型降级链；空环境变量不覆盖配置文件，便于 GitHub Secret 未设置时工作。"""
+        raw_env = os.getenv("DEEPSEEK_FALLBACK_MODELS", "").strip()
+        if raw_env:
+            return _as_list(raw_env)
+        if "deepseek_fallback_models" in data:
+            return _as_list(data.get("deepseek_fallback_models"))
+        return list(DEFAULT_DEEPSEEK_FALLBACK_MODELS)
+
+    @staticmethod
+    def _load_deepseek_thinking(data: dict) -> str:
+        raw = os.getenv("DEEPSEEK_THINKING", data.get("deepseek_thinking", "enabled"))
+        if isinstance(raw, bool):
+            return "enabled" if raw else "disabled"
+        return "disabled" if str(raw).strip().lower() in {"0", "false", "no", "off", "disabled"} else "enabled"
 
     @staticmethod
     def _load_pushplus_topics(data: dict) -> list[str]:

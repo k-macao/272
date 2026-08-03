@@ -46,8 +46,52 @@ class TestDeepSeekAI(unittest.TestCase):
         self.assertEqual(url, DEEPSEEK_API_URL)
         self.assertEqual(headers["Authorization"], "Bearer test-key.secret")
         self.assertEqual(payload["model"], "deepseek-v4-flash")
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+        self.assertEqual(payload["reasoning_effort"], "high")
+        self.assertFalse(payload["stream"])
         self.assertEqual(payload["messages"][0]["content"], SYSTEM_PROMPT)
         self.assertIn("AI算力", payload["messages"][1]["content"])
+
+    def test_fallback_on_unknown_model(self):
+        http = MagicMock()
+        http.post_json.side_effect = [
+            FetchError("HTTP 400: model deepseek-v4-flash not found"),
+            {
+                "choices": [
+                    {"message": {"content": "降级模型返回结果"}},
+                ]
+            },
+        ]
+        client = DeepSeekAI(
+            "test-key",
+            model="deepseek-v4-flash",
+            fallback_models=["deepseek-v4-pro"],
+            http=http,
+        )
+
+        ok, result = client.analyze("主题", "内容")
+
+        self.assertTrue(ok)
+        self.assertEqual(result, "降级模型返回结果")
+        self.assertEqual(client.last_model, "deepseek-v4-pro")
+        self.assertEqual(http.post_json.call_count, 2)
+        self.assertEqual(http.post_json.call_args_list[0].args[1]["model"], "deepseek-v4-flash")
+        self.assertEqual(http.post_json.call_args_list[1].args[1]["model"], "deepseek-v4-pro")
+
+    def test_auth_failure_does_not_try_fallback(self):
+        http = MagicMock()
+        http.post_json.side_effect = FetchError("HTTP 401: invalid API key")
+        client = DeepSeekAI(
+            "test-key",
+            fallback_models=["deepseek-v4-pro"],
+            http=http,
+        )
+
+        ok, msg = client.analyze("主题", "内容")
+
+        self.assertFalse(ok)
+        self.assertIn("DeepSeek API 调用异常", msg)
+        http.post_json.assert_called_once()
 
     def test_api_failure(self):
         http = MagicMock()

@@ -26,6 +26,16 @@ class FetchError(RuntimeError):
     """网络层不可恢复的失败（重试耗尽）。"""
 
 
+class HttpStatusError(FetchError):
+    """HTTP 返回 4xx/5xx，并保留状态码和服务端错误正文。"""
+
+    def __init__(self, status_code: int, detail: str, url: str) -> None:
+        self.status_code = status_code
+        self.detail = detail
+        self.url = url
+        super().__init__(f"HTTP {status_code} POST {url}: {detail}")
+
+
 class Http:
     def __init__(
         self,
@@ -136,8 +146,20 @@ class Http:
         for attempt in range(self.retries + 1):
             try:
                 resp = self.session.post(url, json=payload, headers=headers, timeout=self.timeout)
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    # 保留服务端返回的 message/code，便于区分模型不存在、Key 无效、
+                    # 余额不足、限流和网络问题；只截断正文，避免把异常响应刷爆日志。
+                    detail = (resp.text or "").strip().replace("\\n", " ")[:800]
+                    raise HttpStatusError(resp.status_code, detail or resp.reason, url)
                 return resp.json()
+            except HttpStatusError as exc:
+                last = exc
+                # 4xx 通常是确定性的业务错误，不重复请求；5xx 仍按原策略重试。
+                if exc.status_code < 500 or attempt >= self.retries:
+                    raise
+                delay = self.backoff ** attempt
+                log.debug("POST %s 第%d次返回 HTTP %d，%.1fs 后重试", url, attempt + 1, exc.status_code, delay)
+                time.sleep(delay)
             except Exception as exc:  # noqa: BLE001
                 last = exc
                 if attempt < self.retries:

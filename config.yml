@@ -51,4 +51,8 @@ pushplus_topics: oai.1
 
 # DeepSeek 大模型提炼配置（选填，用于一对一手动主题分析推送）
 deepseek_api_key: ""
+# 当前官方首选模型；模型不可用时按顺序尝试以下候选。
 deepseek_model: "deepseek-v4-flash"
+deepseek_fallback_models: ["deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"]
+# V4 显式指定思考模式，enabled 适合研究分析，disabled 响应更快且更省。
+deepseek_thinking: "enabled"
