@@ -12,7 +12,7 @@ from .config import Config
 from .http import Http
 from .models import Item, SourceResult
 from .notify import PushPlus
-from .render import render_html, render_title
+from .render import render_html, render_manual, render_manual_title, render_title
 from .sources import REGISTRY
 from .state import SeenStore
 from .timeutil import now, stamp
@@ -144,14 +144,46 @@ class Agent:
         return results
 
     # ------------------------------------------------------------------
-    def _push(self, title: str, html: str, *, dry_run: bool) -> bool:
+    def push_manual(
+        self,
+        topic: str,
+        content: str,
+        *,
+        dry_run: bool = False,
+        ref: datetime | None = None,
+    ) -> RunReport:
+        """手动主题分析推送：人工录入内容直接渲染并推送。
+
+        不走抓取/时间校验/去重，内容完全来自用户输入。
+        恒为**一对一**：只推给 token 所属账号本人（PushPlus 个人推送），
+        不携带群组 topic，与 config.pushplus_topics（一对多）互不影响。
+        """
+        ref = ref or now()
+        html = render_manual(topic, content, ref=ref)
+        title = render_manual_title(topic, ref)
+        pushed = self._push(title, html, dry_run=dry_run, topics=[])
+        log.info("=== 手动主题分析：推送 %s", "成功" if pushed else "未执行/失败")
+        return RunReport(
+            total=1 if (content or "").strip() else 0,
+            pushed=pushed,
+            groups=[],
+            results=[],
+            html=html,
+            title=title,
+            ref=ref,
+        )
+
+    # ------------------------------------------------------------------
+    def _push(self, title: str, html: str, *, dry_run: bool, topics: list[str] | None = None) -> bool:
         if not self.config.pushplus_token:
             log.error("未配置 PUSHPLUS_TOKEN，无法推送")
             return False
+        # topics=None 时跟随配置（一对多群组）；显式传 [] 则一对一推给自己
+        topics_to_use = self.config.pushplus_topics if topics is None else topics
         pusher = PushPlus(
             self.http,
             self.config.pushplus_token,
-            topics=self.config.pushplus_topics,
+            topics=topics_to_use,
         )
         return pusher.send(title, html, dry_run=dry_run)
 
