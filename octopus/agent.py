@@ -151,7 +151,7 @@ class Agent:
         pusher = PushPlus(
             self.http,
             self.config.pushplus_token,
-            topic=self.config.pushplus_topic,
+            topics=self.config.pushplus_topics,
         )
         return pusher.send(title, html, dry_run=dry_run)
 

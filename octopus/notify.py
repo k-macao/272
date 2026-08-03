@@ -21,12 +21,15 @@ MAX_CONTENT = 40000
 
 
 class PushPlus:
-    def __init__(self, http: Http, token: str, *, topic: str = "", channel: str = "wechat") -> None:
+    def __init__(self, http: Http, token: str, *, topics: list[str] | str = "", channel: str = "wechat") -> None:
         if not token:
             raise ValueError("PushPlus token 不能为空")
         self.http = http
         self.token = token
-        self.topic = topic
+        if isinstance(topics, str):
+            self.topics = [topics] if topics else []
+        else:
+            self.topics = [t for t in (topics or []) if t]
         self.channel = channel
 
     # ------------------------------------------------------------------
@@ -39,34 +42,47 @@ class PushPlus:
             log.warning("正文 %d 字符超过上限，将被截断", len(content))
             content = content[: MAX_CONTENT - 200] + "</div><div>……内容过长已截断</div>"
 
-        payload = {
+        base_payload = {
             "token": self.token,
             "title": title,
             "content": content,
             "template": "html",
             "channel": self.channel,
         }
-        if self.topic:
-            payload["topic"] = self.topic
 
+        topics_to_send = self.topics or [None]  # None means send to self (no topic)
+
+        success_count = 0
         last_error = ""
-        for url in (PUSHPLUS_URL, PUSHPLUS_URL_FALLBACK):
-            try:
-                data = self.http.post_json(url, payload)
-            except FetchError as exc:
-                last_error = str(exc)
-                time.sleep(1.0)
-                continue
+        for topic in topics_to_send:
+            payload = dict(base_payload)
+            if topic:
+                payload["topic"] = topic
 
-            code = (data or {}).get("code")
-            if code == 200:
-                log.info("推送成功：%s", title)
-                return True
-            last_error = f"code={code} msg={(data or {}).get('msg')}"
-            log.error("PushPlus 返回异常：%s", last_error)
-            # 业务错误（token 失效等）重试无意义
-            if code in (400, 401, 403, 500):
-                break
+            sent_ok = False
+            for url in (PUSHPLUS_URL, PUSHPLUS_URL_FALLBACK):
+                try:
+                    data = self.http.post_json(url, payload)
+                except FetchError as exc:
+                    last_error = str(exc)
+                    time.sleep(1.0)
+                    continue
 
-        log.error("推送失败：%s", last_error)
+                code = (data or {}).get("code")
+                if code == 200:
+                    log.info("推送成功：%s (topic=%s)", title, topic or "self")
+                    sent_ok = True
+                    success_count += 1
+                    break
+                last_error = f"code={code} msg={(data or {}).get('msg')}"
+                log.error("PushPlus 返回异常：%s", last_error)
+                # 业务错误（token 失效等）重试无意义
+                if code in (400, 401, 403, 500):
+                    break
+
+            if not sent_ok:
+                log.error("推送失败 (topic=%s)：%s", topic or "self", last_error)
+
+        if success_count > 0:
+            return True
         return False
