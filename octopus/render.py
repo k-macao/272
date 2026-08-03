@@ -212,3 +212,76 @@ def render_title(total: int, ref: datetime, top: Item | None) -> str:
             headline = headline[:22] + "…"
         return f"{base} · {total}条 · {headline}"
     return f"{base} · {total}条新情报"
+
+
+# ---------------------------------------------------------------------------
+# 手动主题分析推送：人工录入 AI 分析内容，直接渲染成一条独立推送。
+# 与抓取推送共用同一套浅灰底 + 深蓝字样式，但不经过时间校验与去重。
+# ---------------------------------------------------------------------------
+
+
+def render_manual(topic: str, content: str, *, ref: datetime) -> str:
+    """把人工录入的 AI 分析主题/内容渲染成一条完整的推送正文。"""
+    topic = (topic or "").strip()
+    content = (content or "").strip()
+    parts: list[str] = []
+    parts.append(
+        f'<div style="background:{BG};padding:14px 12px;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
+        f'\'Helvetica Neue\',Helvetica,Arial,sans-serif;color:{NAVY};'
+        f'line-height:1.6;font-size:15px;">'
+    )
+    parts.append(_manual_header(ref))
+    parts.append(_manual_card(topic, content))
+    parts.append(_manual_footer(ref))
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _manual_header(ref: datetime) -> str:
+    return (
+        f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
+        f'border-left:5px solid {ACCENT};border-radius:8px;padding:12px 14px;'
+        f'margin-bottom:12px;">'
+        f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};'
+        f'letter-spacing:.5px;">章鱼 AI · 主题分析</div>'
+        f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:6px;">'
+        f'人工录入内容 · 发布时间 {stamp(ref)}（北京时间）</div>'
+        f"</div>"
+    )
+
+
+def _manual_card(topic: str, content: str) -> str:
+    title = html.escape(topic) if topic else "AI 分析内容"
+    body = html.escape(content).replace("\n", "<br>")
+    return (
+        f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
+        f'border-radius:8px;padding:12px 14px;margin-bottom:12px;">'
+        f'<div style="font-size:16px;font-weight:700;color:{NAVY_DEEP};'
+        f'padding-bottom:7px;margin-bottom:10px;border-bottom:2px solid {BORDER};">'
+        f"▍{title}</div>"
+        f'<div style="font-size:15px;color:{NAVY};line-height:1.75;">{body}</div>'
+        f"</div>"
+    )
+
+
+def _manual_footer(ref: datetime) -> str:
+    return (
+        f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
+        f'border-radius:8px;padding:10px 12px;font-size:11px;color:{NAVY_SOFT};">'
+        f'<div style="font-weight:600;color:{NAVY};margin-bottom:4px;">章鱼 AI</div>'
+        f'<div style="margin-top:3px;">内容由人工录入，未经程序抓取校验</div>'
+        f'<div style="margin-top:3px;">仅供参考，不构成投资建议</div>'
+        f"</div>"
+    )
+
+
+def render_manual_title(topic: str, ref: datetime) -> str:
+    """手动主题分析的推送标题：微信通知栏只显示这一行。"""
+    base = f"章鱼AI {ref:%m-%d %H:%M} · AI分析"
+    topic = (topic or "").strip()
+    if not topic:
+        return f"{base} · 主题"
+    if len(topic) > 22:
+        topic = topic[:22] + "…"
+    return f"{base} · {topic}"

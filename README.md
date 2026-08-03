@@ -130,6 +130,62 @@ python main.py --verbose                # 调试日志
 
 ---
 
+## 手动主题分析推送（一对一）
+
+除了定时抓取，也可以**人工录入一段 AI 分析内容**（主题 + 正文），
+用同一套浅灰底深蓝字样式渲染成独立推送发到微信，不经过抓取/时间校验/去重。
+
+> **一对一**：手动推送恒为 PushPlus **个人推送**——只发给 token 所属账号本人，
+> **不携带群组 topic**，与 `config.yml` 里的 `pushplus_topics: oai.1`（一对多）互不影响。
+
+### 方式一：独立网页页面（推荐）
+
+本地起一个独立的推送页面，浏览器里输入主题/内容、预览、一键发送：
+
+```bash
+python main.py --manual-web              # 打开 http://127.0.0.1:8765
+python main.py --manual-web --port 9000  # 换端口
+python main.py --manual-web --host 0.0.0.0   # 服务器/局域网使用
+```
+
+页面与抓取流水线完全独立，自带「预览效果」（和微信收到的渲染一致）与「发送推送」。
+绑定 `0.0.0.0` 时建议设置访问令牌：
+
+```bash
+export OCTOPUS_WEB_TOKEN=你的令牌   # 页面需输入令牌才能推送
+```
+
+### 方式二：命令行
+
+```bash
+# 参数直给
+python main.py --manual --topic "机器人板块分析" \
+  --content "今日机器人板块放量上涨，情绪回暖，关注减速器方向……"
+
+# 从文件/管道读入内容（内容可以很长）
+python main.py --manual --topic "机器人板块分析" < analysis.md
+
+# 终端交互输入（先输主题，再逐行输内容，完成后按 Ctrl+D）
+python main.py --manual
+
+# 只生成预览不推送（写入 preview.html）
+python main.py --manual --topic "机器人板块分析" --content "……" --dry-run
+```
+
+- `--topic` 是可选的；不给就只推内容，标题显示为「主题」。
+- 手动模式忽略 `--loop` / `--sources` / `--window`，推一次即退出。
+- 推送失败返回退出码 1，方便在 CI 里显式发现。
+
+### 方式三：独立的启动 yml（GitHub Actions 手动触发）
+
+`deploy/github-workflows/manual_push.yml` 是**独立于定时抓取**的 workflow：
+仓库 **Actions → 章鱼AI 手动主题推送 → Run workflow**，在表单里填主题与多行内容
+即可一对一推送（`dry_run: true` 可先出预览再下载）。该 workflow 只传
+`PUSHPLUS_TOKEN`，不传群组 topic，保证一对一。与 scrape 一样需要手动
+`cp` 到 `.github/workflows/` 后生效（见 `deploy/README.md`）。
+
+---
+
 ## 项目结构
 
 ```
@@ -141,8 +197,9 @@ octopus/
 ├── render.py         # 浅灰底 + 深蓝字的 HTML 渲染
 ├── notify.py         # PushPlus 推送
 ├── agent.py          # 主流程编排
+├── webui.py          # 独立的手动推送网页（一对一）
 └── sources/          # 十个源，各自独立
-tests/                # 105 个测试，全离线
+tests/                # 123 个测试，全离线
 └── fixtures/         # 真实接口响应样本
 ```
 
@@ -152,7 +209,7 @@ tests/                # 105 个测试，全离线
 python -m unittest discover -s tests -t . -v
 ```
 
-105 个测试全部离线运行（用真实抓取的响应样本做 fixture），不依赖网络。覆盖时间解析的各种畸形格式、过滤逻辑、去重、降级路径、HTML 转义、条数上限语义（0 = 全量）与端到端流程。
+123 个测试全部离线运行（用真实抓取的响应样本做 fixture），不依赖网络。覆盖时间解析的各种畸形格式、过滤逻辑、去重、降级路径、HTML 转义、条数上限语义（0 = 全量）、手动主题分析推送（一对一语义 / 独立网页 / 令牌保护）与端到端流程。
 
 ---
 

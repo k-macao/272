@@ -1,0 +1,68 @@
+# 章鱼AI 手动主题推送 —— 独立的启动 yml，与定时抓取（scrape.yml）完全独立。
+# 一对一：手动推送只发给自己（token 所属账号），不携带群组 topic。
+name: 章鱼AI 手动主题推送
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "AI 分析主题标题（一对一推送到自己微信）"
+        required: false
+        default: ""
+        type: string
+      content:
+        description: "AI 分析内容（支持多行，直接粘贴分析全文）"
+        required: true
+        type: string
+      dry_run:
+        description: "只生成预览不推送"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: write
+
+jobs:
+  manual-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 手动主题分析一对一推送
+        env:
+          # 只传 PUSHPLUS_TOKEN：手动推送强制一对一，忽略 PUSHPLUS_TOPIC
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          MANUAL_TOPIC: ${{ github.event.inputs.topic }}
+          MANUAL_CONTENT: ${{ github.event.inputs.content }}
+          TZ: Asia/Shanghai
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python main.py --manual --topic "$MANUAL_TOPIC" --content "$MANUAL_CONTENT" --dry-run
+          else
+            python main.py --manual --topic "$MANUAL_TOPIC" --content "$MANUAL_CONTENT"
+          fi
+
+      - name: 上传预览（仅 dry-run）
+        if: always() && github.event.inputs.dry_run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: preview
+          path: preview.html
+          if-no-files-found: ignore
+          retention-days: 3
