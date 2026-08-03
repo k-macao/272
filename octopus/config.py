@@ -37,7 +37,7 @@ class Config:
     timeout: float = 15.0
     retries: int = 2
     pushplus_token: str = ""
-    pushplus_topic: str = ""
+    pushplus_topics: list[str] = field(default_factory=list)
     sources: dict[str, dict] = field(default_factory=dict)
     disabled_sources: list[str] = field(default_factory=list)
 
@@ -84,7 +84,7 @@ class Config:
             timeout=float(data["timeout"]),
             retries=int(data["retries"]),
             pushplus_token=os.getenv("PUSHPLUS_TOKEN", str(data.get("pushplus_token", ""))).strip(),
-            pushplus_topic=os.getenv("PUSHPLUS_TOPIC", str(data.get("pushplus_topic", ""))).strip(),
+            pushplus_topics=Config._load_pushplus_topics(data),
             sources=dict(data.get("sources") or {}),
             disabled_sources=_as_list(data.get("disabled_sources")),
         )
@@ -93,6 +93,27 @@ class Config:
         cfg = dict(self.sources.get(name) or {})
         cfg.setdefault("limit", self.max_items_per_source)
         return cfg
+
+    @staticmethod
+    def _load_pushplus_topics(data: dict) -> list[str]:
+        """Load pushplus_topics from env or config (supports comma separated or list)."""
+        env_topics = os.getenv("PUSHPLUS_TOPICS", "")
+        if env_topics:
+            return [t.strip() for t in env_topics.split(",") if t.strip()]
+
+        # fallback to legacy single topic
+        legacy = os.getenv("PUSHPLUS_TOPIC", str(data.get("pushplus_topic", ""))).strip()
+        if legacy:
+            return [legacy]
+
+        raw = data.get("pushplus_topics") or data.get("pushplus_topic", "")
+        if isinstance(raw, str):
+            if raw:
+                return [t.strip() for t in raw.split(",") if t.strip()]
+            return []
+        if isinstance(raw, (list, tuple)):
+            return [str(t).strip() for t in raw if str(t).strip()]
+        return []
 
 
 def _as_list(value: Any) -> list[str]:

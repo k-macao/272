@@ -43,3 +43,8 @@ sources:
     move_threshold: 5.0 # 转债涨跌幅异动阈值(%)
     mover_top: 6
     dblow_top: 5        # 双低榜取前几只
+
+# PushPlus 群组推送（一对多）支持多个 topic，逗号分隔或列表
+pushplus_topics: oai.1
+# pushplus_topics: ["oai.1", "another-group"]
+# 留空则只推送给自己（单人模式）

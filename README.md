@@ -12,6 +12,8 @@
 pip install -r requirements.txt
 
 export PUSHPLUS_TOKEN=你的token
+# 一对多群组推送（可选，逗号分隔多个群组编码）
+export PUSHPLUS_TOPICS=group1,group2
 python main.py --dry-run    # 先本地预览，正文写入 preview.html
 python main.py              # 抓取并推送一次
 python main.py --loop       # 常驻，每 30 分钟一轮
