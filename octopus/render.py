@@ -220,10 +220,18 @@ def render_title(total: int, ref: datetime, top: Item | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def render_manual(topic: str, content: str, *, ref: datetime) -> str:
-    """把人工录入的 AI 分析主题/内容渲染成一条完整的推送正文。"""
+def render_manual(
+    topic: str,
+    content: str,
+    *,
+    ref: datetime,
+    ai_summary: str = "",
+    ai_model: str = "GLM-4",
+) -> str:
+    """把人工录入的 AI 分析主题/内容（可选搭配智谱大模型提炼）渲染成推送正文。"""
     topic = (topic or "").strip()
     content = (content or "").strip()
+    ai_summary = (ai_summary or "").strip()
     parts: list[str] = []
     parts.append(
         f'<div style="background:{BG};padding:14px 12px;'
@@ -231,14 +239,23 @@ def render_manual(topic: str, content: str, *, ref: datetime) -> str:
         f'\'Helvetica Neue\',Helvetica,Arial,sans-serif;color:{NAVY};'
         f'line-height:1.6;font-size:15px;">'
     )
-    parts.append(_manual_header(ref))
-    parts.append(_manual_card(topic, content))
+    parts.append(_manual_header(ref, ai_model=ai_model if ai_summary else ""))
+    if ai_summary:
+        parts.append(_manual_ai_card(ai_summary, ai_model))
+        parts.append(_manual_card(topic or "原始录入内容", content))
+    else:
+        parts.append(_manual_card(topic, content))
     parts.append(_manual_footer(ref))
     parts.append("</div>")
     return "".join(parts)
 
 
-def _manual_header(ref: datetime) -> str:
+def _manual_header(ref: datetime, ai_model: str = "") -> str:
+    sub = (
+        f"智谱大模型提炼（{html.escape(ai_model)}） · 人工录入 · 发布时间 {stamp(ref)}（北京时间）"
+        if ai_model
+        else f"人工录入内容 · 发布时间 {stamp(ref)}（北京时间）"
+    )
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-left:5px solid {ACCENT};border-radius:8px;padding:12px 14px;'
@@ -246,7 +263,21 @@ def _manual_header(ref: datetime) -> str:
         f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};'
         f'letter-spacing:.5px;">章鱼 AI · 主题分析</div>'
         f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:6px;">'
-        f'人工录入内容 · 发布时间 {stamp(ref)}（北京时间）</div>'
+        f"{sub}</div>"
+        f"</div>"
+    )
+
+
+def _manual_ai_card(ai_summary: str, ai_model: str) -> str:
+    title = f"✨ 智谱 AI 智能提炼 · 分类与摘要 ({html.escape(ai_model)})"
+    body = html.escape(ai_summary).replace("\n", "<br>")
+    return (
+        f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
+        f'border-left:4px solid #1b5e20;border-radius:8px;padding:12px 14px;margin-bottom:12px;">'
+        f'<div style="font-size:16px;font-weight:700;color:{NAVY_DEEP};'
+        f'padding-bottom:7px;margin-bottom:10px;border-bottom:2px solid {BORDER};">'
+        f"▍{title}</div>"
+        f'<div style="font-size:15px;color:{NAVY};line-height:1.75;">{body}</div>'
         f"</div>"
     )
 

@@ -48,6 +48,8 @@ jobs:
         env:
           # 只传 PUSHPLUS_TOKEN：手动推送强制一对一，忽略 PUSHPLUS_TOPIC
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          ZHIPU_MODEL: ${{ secrets.ZHIPU_MODEL }}
           MANUAL_TOPIC: ${{ github.event.inputs.topic }}
           MANUAL_CONTENT: ${{ github.event.inputs.content }}
           TZ: Asia/Shanghai

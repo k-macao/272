@@ -100,7 +100,7 @@ class JisiluSource(Source):
     # ------------------------------------------------------------------
     def _build(self, row: dict, *, kind: str, note: str = "") -> Item | None:
         last_time = row.get("last_time")
-        published, quality, raw = parse(last_time)
+        published, quality, raw = parse(last_time, ref=now())
         if published is None:
             return None
 
