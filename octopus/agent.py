@@ -144,6 +144,44 @@ class Agent:
         return results
 
     # ------------------------------------------------------------------
+    def _refine_manual(self, topic: str, content: str) -> tuple[str, str]:
+        """按需调用智谱大模型 API 提炼主题内容。"""
+        if not self.config.zhipu_api_key or not (content or "").strip():
+            return "", ""
+        from .ai import ZhipuAI
+
+        client = ZhipuAI(
+            self.config.zhipu_api_key,
+            model=self.config.zhipu_model,
+            http=self.http,
+        )
+        log.info("调用智谱 API (%s) 提炼分类与摘要...", self.config.zhipu_model)
+        ok, res = client.analyze(topic, content)
+        if ok and res:
+            log.info("智谱 API 提炼完成 (%d 字符)", len(res))
+            return res, self.config.zhipu_model
+        log.warning("智谱 API 提炼未成功: %s", res)
+        return "", ""
+
+    def preview_manual(
+        self,
+        topic: str,
+        content: str,
+        *,
+        ref: datetime | None = None,
+        use_ai: bool = True,
+    ) -> str:
+        """生成手动主题分析的预览 HTML 正文（可选带智谱 AI 提炼）。"""
+        ref = ref or now()
+        ai_summary, ai_model = self._refine_manual(topic, content) if use_ai else ("", "")
+        return render_manual(
+            topic,
+            content,
+            ref=ref,
+            ai_summary=ai_summary,
+            ai_model=ai_model,
+        )
+
     def push_manual(
         self,
         topic: str,
@@ -151,15 +189,23 @@ class Agent:
         *,
         dry_run: bool = False,
         ref: datetime | None = None,
+        use_ai: bool = True,
     ) -> RunReport:
         """手动主题分析推送：人工录入内容直接渲染并推送。
 
-        不走抓取/时间校验/去重，内容完全来自用户输入。
+        支持自动调用智谱大模型进行提炼、分类或摘要（如配置了 ZHIPU_API_KEY）。
         恒为**一对一**：只推给 token 所属账号本人（PushPlus 个人推送），
         不携带群组 topic，与 config.pushplus_topics（一对多）互不影响。
         """
         ref = ref or now()
-        html = render_manual(topic, content, ref=ref)
+        ai_summary, ai_model = self._refine_manual(topic, content) if use_ai else ("", "")
+        html = render_manual(
+            topic,
+            content,
+            ref=ref,
+            ai_summary=ai_summary,
+            ai_model=ai_model,
+        )
         title = render_manual_title(topic, ref)
         pushed = self._push(title, html, dry_run=dry_run, topics=[])
         log.info("=== 手动主题分析：推送 %s", "成功" if pushed else "未执行/失败")

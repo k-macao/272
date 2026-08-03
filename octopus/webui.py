@@ -66,7 +66,7 @@ PAGE = """<!doctype html>
 <div class="wrap">
   <div class="card">
     <h1>章鱼 AI · 手动主题推送</h1>
-    <div class="sub">一对一推送：直接发到 token 所属账号的微信，不走群组。<br>本页面与定时抓取完全独立，仅做「录入 → 预览 → 推送」。</div>
+    <div class="sub">一对一推送：直接发到 token 所属账号的微信，不走群组。<br>录入主题内容后，支持自动调用智谱大模型 API（如配有 ZHIPU_API_KEY）进行智能提炼、分类与摘要，再组合推送到微信。</div>
     <label for="topic">AI 分析主题（可选）</label>
     <input type="text" id="topic" placeholder="例如：机器人板块分析">
     <label for="content">AI 分析内容（必填）</label>
@@ -171,7 +171,7 @@ class ManualWebHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/preview":
-            html = render_manual(topic, content, ref=now())
+            html = self.agent.preview_manual(topic, content, ref=now())
             self._send_json(200, {"ok": True, "html": html})
             return
 

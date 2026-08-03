@@ -299,5 +299,70 @@ class TestManualCli(unittest.TestCase):
         self.assertIn("来自标准输入的内容<br>第二行", text)
 
 
+class TestManualZhipuAI(unittest.TestCase):
+    def test_push_manual_with_zhipu_api(self):
+        from unittest.mock import MagicMock
+        from octopus.agent import Agent
+        from octopus.config import Config
+
+        cfg = Config(
+            state_file="state/seen.json",
+            pushplus_token="test-token",
+            zhipu_api_key="zhipu-secret-key",
+            zhipu_model="glm-4-flash",
+        )
+        agent = Agent(cfg)
+        agent.http = MagicMock()
+        # mock http.post_json 为两种接口返回不同结果：
+        # 1) ZHIPU 提炼 API -> {"choices": [{"message": {"content": "【核心提炼】：这是大模型的总结"}}]}
+        # 2) PushPlus 推送 API -> {"code": 200, "msg": "ok"}
+        def mock_post_json(url, payload, **kwargs):
+            if "bigmodel.cn" in url:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "【分类标签】：AI概念\n【核心结论】：看好发展"
+                            }
+                        }
+                    ]
+                }
+            return {"code": 200, "msg": "ok"}
+
+        agent.http.post_json.side_effect = mock_post_json
+
+        report = agent.push_manual("AI测试", "一大段复杂的分析内容……")
+        self.assertTrue(report.pushed)
+        self.assertIn("✨ 智谱 AI 智能提炼", report.html)
+        self.assertIn("【分类标签】：AI概念", report.html)
+        self.assertIn("一大段复杂的分析内容……", report.html)
+
+    def test_preview_manual_with_zhipu_api(self):
+        from unittest.mock import MagicMock
+        from octopus.agent import Agent
+        from octopus.config import Config
+
+        cfg = Config(
+            state_file="state/seen.json",
+            zhipu_api_key="zhipu-secret-key",
+            zhipu_model="glm-4-flash",
+        )
+        agent = Agent(cfg)
+        agent.http = MagicMock()
+        agent.http.post_json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "【分类标签】：半导体\n【核心结论】：复苏预期强"
+                    }
+                }
+            ]
+        }
+        html = agent.preview_manual("半导体行业", "研报正文：订单显著上升")
+        self.assertIn("✨ 智谱 AI 智能提炼", html)
+        self.assertIn("【分类标签】：半导体", html)
+        self.assertIn("研报正文：订单显著上升", html)
+
+
 if __name__ == "__main__":
     unittest.main()

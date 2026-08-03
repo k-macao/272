@@ -4,5 +4,12 @@
 整合后推送到微信 PushPlus。
 """
 
+from __future__ import annotations
+
+from .agent import Agent
+from .ai import ZhipuAI
+from .config import Config
+
 __version__ = "1.0.0"
 __author__ = "章鱼 AI"
+__all__ = ["Agent", "Config", "ZhipuAI"]
