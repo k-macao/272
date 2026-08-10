@@ -1,4 +1,4 @@
-name: 章鱼AI 抓取推送
+name: 章鱼AI 抓取
 
 on:
   schedule:
@@ -10,7 +10,7 @@ on:
       window_minutes:
         description: "时间窗口（分钟）"
         required: false
-        default: "180"
+        default: 300"
       dry_run:
         description: "只抓不推（true/false）"
         required: false
