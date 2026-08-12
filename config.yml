@@ -71,6 +71,12 @@ factor_kline_limit: 250
 # 监管动态回溯天数（问询函/立案/异常波动等）
 supervision_days: 30
 
+# 主题因子分析的行情数据源：
+#   auto（默认）—— 东财优先，任一环节连不上自动降级 Yahoo Finance
+#   eastmoney    —— 只用东方财富接口（国内机器，板块/资金流最全）
+#   yahoo        —— 只用 Yahoo Finance（国外机器可直连，免费、免注册、无 Key）
+factor_market_source: auto
+
 # GitHub Token（选填）：拉取 microsoft/qlib 因子定义时用。
 # qlib 是公共仓库，不填也能读（未认证 60 次/小时），填了只是提高限额。
 github_token: ""

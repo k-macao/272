@@ -648,7 +648,12 @@ class TestWorkflowTemplate(unittest.TestCase):
         inputs = data[True]["workflow_dispatch"]["inputs"]
         self.assertEqual(
             set(inputs),
-            {"theme", "stock_top", "supervision_days", "use_ai", "dry_run"},
+            {"theme", "stock_top", "supervision_days", "use_ai", "dry_run", "market_source"},
+        )
+        self.assertIn("market_source", inputs)
+        self.assertEqual(
+            set(inputs["market_source"]["options"]),
+            {"auto", "yahoo", "eastmoney"},
         )
         self.assertTrue(inputs["theme"]["required"])
 

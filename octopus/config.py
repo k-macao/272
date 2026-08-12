@@ -34,6 +34,9 @@ DEFAULTS: dict[str, Any] = {
     "factor_kline_limit": 250,
     # 监管动态回溯天数
     "supervision_days": 30,
+    # 主题因子分析的行情数据源：eastmoney（国内东财）/ yahoo（国外免费源，
+    # Yahoo Finance，免注册无 Key）/ auto（东财优先，任一环节失败自动降级 Yahoo）
+    "factor_market_source": "auto",
 }
 
 
@@ -61,6 +64,7 @@ class Config:
     factor_stock_top: int = 6
     factor_kline_limit: int = 250
     supervision_days: int = 30
+    factor_market_source: str = "auto"
     sources: dict[str, dict] = field(default_factory=dict)
     disabled_sources: list[str] = field(default_factory=list)
 
@@ -85,6 +89,7 @@ class Config:
             "factor_stock_top": ("OCTOPUS_FACTOR_STOCK_TOP", int),
             "factor_kline_limit": ("OCTOPUS_FACTOR_KLINE_LIMIT", int),
             "supervision_days": ("OCTOPUS_SUPERVISION_DAYS", int),
+            "factor_market_source": ("OCTOPUS_FACTOR_MARKET_SOURCE", str),
         }
         for key, (env, caster) in env_map.items():
             raw = os.getenv(env)
@@ -137,6 +142,7 @@ class Config:
             factor_stock_top=int(data.get("factor_stock_top", 6) or 6),
             factor_kline_limit=int(data.get("factor_kline_limit", 250) or 250),
             supervision_days=int(data.get("supervision_days", 30) or 30),
+            factor_market_source=str(data.get("factor_market_source", "auto") or "auto").strip().lower(),
             sources=dict(data.get("sources") or {}),
             disabled_sources=_as_list(data.get("disabled_sources")),
         )

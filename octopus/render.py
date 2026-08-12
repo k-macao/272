@@ -401,6 +401,7 @@ def _theme_overview(analysis) -> str:
             (
                 "命中板块",
                 f"{board.name}（{board.kind}）{board.change:+.2f}%"
+                + ("（推算）" if board.change_derived else "")
                 + (f" · 主力{board.main_inflow / 1e8:+.2f}亿" if board.main_inflow else ""),
             )
         )

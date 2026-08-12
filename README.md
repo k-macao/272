@@ -171,19 +171,53 @@ python main.py --theme "人形机器人"              # 分析并推送
 python main.py --theme "创业板" --dry-run        # 只出预览，写入 preview.html
 python main.py --theme "半导体" --stock-top 8    # 多看几只成分股
 python main.py --theme "储能" --no-ai            # 不调大模型，用内置规则化解读
+python main.py --theme "人形机器人" --market-source yahoo   # 指定用国外免费源
 ```
 
 ### 它做了什么
 
 ```
 主题
- ├─→ ① 板块匹配      东财概念/行业板块 → 命中板块内成交额前 N 只个股 + 基准指数
+ ├─→ ① 板块匹配      概念/行业板块（东财实时板块 或 内置概念词典）
+ │                     → 命中板块内成交额前 N 只个股 + 基准指数
  ├─→ ② 因子模型      GitHub 实时拉取 microsoft/qlib 的 Alpha158 因子定义
  ├─→ ③ 因子计算      在真实日线上求值 → 压缩成六维画像
  ├─→ ④ 市场监督管理   抓取问询函/立案/异常波动等监管事件，评估监管风险等级
  ├─→ ⑤ AI 解读       把「算好的事实清单」交给 DeepSeek 写报告
  └─→ ⑥ 合规审查      违规荐股表述检测与中性化改写 → PushPlus 一对一推送
 ```
+
+### ① 行情数据源：国内东财 / 国外 Yahoo 免费源（可切换、自动降级）
+
+主题分析需要 A 股行情数据。**国内机器**直连东方财富接口（板块/主力资金/换手率
+最全）；**国外机器**（海外 VPS、GitHub Actions 的服务器在美国）也能跑：
+新增了 **Yahoo Finance** 作为免费数据源 —— 免注册、无 API Key，直接读
+`600519.SS / 000001.SZ` 这类代码的日线与实时报价。
+
+```bash
+python main.py --theme "人形机器人" --market-source yahoo   # 只用 Yahoo
+python main.py --theme "人形机器人" --market-source auto    # 默认：东财优先，失败自动降级
+```
+
+| 配置值 | 行为 |
+|---|---|
+| `auto`（默认） | 先试东财；任一环节连不上自动降级 Yahoo |
+| `eastmoney` | 只用东方财富接口（国内机器） |
+| `yahoo` | 只用 Yahoo Finance（国外机器，免费免 Key） |
+
+环境变量 `OCTOPUS_FACTOR_MARKET_SOURCE` 或 `config.yml` 的
+`factor_market_source` 同样生效。报告里会如实标注本次实际用了哪个数据源。
+
+**Yahoo 源的差异（全部如实标注，不假装数据来自东财）：**
+
+- 板块列表：Yahoo 不提供 A 股概念板块，改用**内置概念词典**
+  （`octopus/factor/concepts.py`，约 80 个概念/行业 × 代表性个股），
+  主题匹配逻辑不变；
+- 板块涨跌幅：由成分股最新行情**推算**，报告标注「（推算）」；
+- 个股成交额：由「最新价 × 成交量」**推算**，用于板块内排序；
+- 换手率 / 主力净流入：Yahoo 不提供，报告显示「数据缺失」；
+- 日线为**前复权**（原始价 × 复权因子，与 yfinance 同口径），
+  日期由接口给出并校验，解析不出的整根丢弃。
 
 ### ① 调用 GitHub 上的因子模型（不是本地写死的公式）
 
@@ -302,6 +336,7 @@ factor_stock_top: 6        # 取板块内成交额前几只个股
 factor_kline_limit: 250    # 取多少根日线算因子（60日窗口至少要 70 根）
 supervision_days: 30       # 监管动态回溯天数
 github_token: ""           # 选填，仅用于提高 GitHub API 限额
+factor_market_source: auto # 行情数据源：auto（东财优先自动降级）/ eastmoney / yahoo
 ```
 
 ---

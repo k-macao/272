@@ -8,6 +8,7 @@
     python main.py --window 60     # 临时改时间窗口（分钟）
     python main.py --theme "机器人"        # 主题因子分析：只输入主题，自动分析并一对一推送
     python main.py --theme "机器人" --dry-run   # 只出预览，写入 preview.html
+    python main.py --theme "机器人" --market-source yahoo  # 国外机器：用 Yahoo Finance 免费源
     python main.py --manual        # 手动模式：交互输入 AI 分析主题/内容并推送
     python main.py --manual --topic "机器人板块分析" --content "……"   # 参数直给
     python main.py --manual --topic "机器人板块分析" < analysis.md     # 从文件读内容
@@ -66,6 +67,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="主题分析取板块内前几只个股（默认 6）")
     p.add_argument("--supervision-days", type=int, default=None,
                    help="监管动态回溯天数（默认 30）")
+    p.add_argument("--market-source", default="",
+                   choices=["", "auto", "yahoo", "eastmoney"],
+                   help="主题分析行情数据源：eastmoney（东财）/ yahoo（国外免费源）/ auto（默认，东财优先自动降级）")
     p.add_argument("--manual-web", action="store_true",
                    help="启动独立的手动推送网页（默认 http://127.0.0.1:8765）")
     p.add_argument("--host", default="127.0.0.1", help="网页服务监听地址（默认 127.0.0.1）")
@@ -105,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         config.factor_stock_top = args.stock_top
     if args.supervision_days:
         config.supervision_days = args.supervision_days
+    if args.market_source:
+        config.factor_market_source = args.market_source.strip().lower()
     if args.sources:
         from octopus.sources import REGISTRY
 
