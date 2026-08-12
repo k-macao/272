@@ -608,5 +608,71 @@ class TestAgentPushTheme(PipelineTestCase):
         self.assertEqual(len(RecordingPush.sent), 0)
 
 
+class TestWorkflowTemplate(unittest.TestCase):
+    """粘贴用模版 theme_analysis.yml.txt 必须与真正的 workflow 保持一致。
+
+    GitHub App 没有 workflows 权限，推不了 .github/workflows/，
+    所以要靠人工复制。模版一旦悄悄和 .yml 脱节，人工复制出来的就是旧版本。
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    WORKFLOW_DIR = ROOT / "deploy" / "github-workflows"
+    SEPARATOR = "# ============================== 分隔线：以下为正文 ==========================\n\n"
+
+    def setUp(self):
+        self.yml = self.WORKFLOW_DIR / "theme_analysis.yml"
+        self.tpl = self.WORKFLOW_DIR / "theme_analysis.yml.txt"
+
+    def test_both_files_exist(self):
+        self.assertTrue(self.yml.is_file(), "缺少 theme_analysis.yml")
+        self.assertTrue(self.tpl.is_file(), "缺少粘贴用模版 theme_analysis.yml.txt")
+
+    def test_template_body_matches_workflow_byte_for_byte(self):
+        text = self.tpl.read_text(encoding="utf-8")
+        self.assertEqual(text.count(self.SEPARATOR), 1, "分隔线必须恰好出现一次")
+        body = text.split(self.SEPARATOR, 1)[1]
+        self.assertEqual(
+            body,
+            self.yml.read_text(encoding="utf-8"),
+            "模版分隔线之后的内容与 theme_analysis.yml 不一致，请重新同步",
+        )
+
+    def test_workflow_is_valid_yaml_with_expected_inputs(self):
+        try:
+            import yaml
+        except ImportError:  # pragma: no cover - 环境无 pyyaml 时跳过
+            self.skipTest("未安装 pyyaml")
+        data = yaml.safe_load(self.yml.read_text(encoding="utf-8"))
+        self.assertEqual(data["name"], "章鱼AI 主题因子分析")
+        # YAML 会把裸 on 解析成 True
+        inputs = data[True]["workflow_dispatch"]["inputs"]
+        self.assertEqual(
+            set(inputs),
+            {"theme", "stock_top", "supervision_days", "use_ai", "dry_run"},
+        )
+        self.assertTrue(inputs["theme"]["required"])
+
+    def test_workflow_never_passes_group_topic(self):
+        """一对一的最后一道闸：workflow 不得把 PUSHPLUS_TOPIC 作为环境变量传进去。
+
+        模版顶部的说明文字里会提到这个变量名（解释「为什么刻意不传」），
+        所以查的是 env 赋值 `PUSHPLUS_TOPIC:` 而不是单纯提及。
+        """
+        for path in (self.yml, self.tpl):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue  # 注释里提及无妨
+                self.assertFalse(
+                    stripped.startswith("PUSHPLUS_TOPIC:"),
+                    f"{path.name} 不应传群组 topic：{line!r}",
+                )
+
+    def test_workflow_invokes_theme_entrypoint(self):
+        body = self.yml.read_text(encoding="utf-8")
+        self.assertIn("--theme", body)
+        self.assertIn("PUSHPLUS_TOKEN", body)
+
+
 if __name__ == "__main__":
     unittest.main()

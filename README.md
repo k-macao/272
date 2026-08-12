@@ -291,6 +291,10 @@ qlib 的因子长这样，需要一个求值器：
 **Actions → 章鱼AI 主题因子分析 → Run workflow**，填入主题即可一对一推送
 （可选个股数量、监管回溯天数、是否用 AI、是否只出预览）。
 
+> 首次使用需把该文件复制到 `.github/workflows/`（推送用的 GitHub App
+> 没有 `workflows` 权限）。同目录下的 `theme_analysis.yml.txt` 是粘贴用过渡文件，
+> 可直接在 GitHub 网页上新建文件后粘贴，详见 [`deploy/README.md`](deploy/README.md)。
+
 ### 配置
 
 ```yaml
