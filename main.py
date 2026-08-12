@@ -78,6 +78,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="DeepSeek 大模型 API Key（用于手动推送时进行内容提炼、分类和摘要）")
     p.add_argument("--deepseek-model", default="",
                    help="DeepSeek 大模型名称（默认 deepseek-v4-flash）")
+    # --- 合并推送 ----------------------------------------------------------
+    p.add_argument("--merge", nargs="+", default=[],
+                   help="合并多份 Markdown 报告后推送：python main.py --merge goldwind_analysis.md multi_factor_report.md --merge-topic \"合并报告\" --dry-run")
+    p.add_argument("--merge-topic", default="",
+                   help="合并报告的主题标题（可选，默认自动拼接）")
+    p.add_argument("--generate-merged-report", action="store_true",
+                   help="一键生成示范合并报告 merged_report.md（goldwind + multi_factor）")
     return p
 
 
@@ -121,10 +128,15 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         config.disabled_sources = [n for n in REGISTRY if n not in wanted]
 
-    if not config.pushplus_token and not args.dry_run and not args.manual_web:
+    if not config.pushplus_token and not args.dry_run and not args.manual_web and not args.generate_merged_report and not args.merge:
         log.error("缺少 PUSHPLUS_TOKEN（环境变量或 config.yml），"
                   "如只想本地预览请加 --dry-run")
         return 2
+    # 合并模式的 dry-run 也不强制 token
+    if args.merge and args.dry_run:
+        pass  # 允许无 token 预览
+    elif args.generate_merged_report:
+        pass  # 本地生成合并报告，无需 token
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -132,6 +144,11 @@ def main(argv: list[str] | None = None) -> int:
     agent = Agent(config, base_dir=BASE_DIR)
     exit_code = 0
     try:
+        # 新增：生成示范合并报告（本地文件合并，无需 token）
+        if args.generate_merged_report:
+            return _run_generate_merged(log)
+        if args.merge:
+            return _run_merge(agent, args, log)
         if args.manual_web:
             return _run_manual_web(agent, args, log)
         if args.theme:
@@ -277,6 +294,70 @@ def _print_theme_summary(topic, analysis, title: str, preview) -> None:
     if preview is not None:
         print(f"\n正文已写入 {preview}")
     print()
+
+
+def _run_generate_merged(log: logging.Logger) -> int:
+    """一键生成示范合并报告 merged_report.md"""
+    from octopus.merge import generate_demo_merged_report
+
+    try:
+        out = generate_demo_merged_report(base_dir=BASE_DIR)
+        log.info("示范合并报告已生成：%s", out)
+        print("\n" + "=" * 64)
+        print(f"合并报告已生成：{out}")
+        print(f"  来源：goldwind_analysis.md + multi_factor_report.md")
+        print(f"  大小：{out.stat().st_size} 字节")
+        print("=" * 64 + "\n")
+        return 0
+    except Exception as exc:
+        log.error("生成合并报告失败：%s", exc)
+        return 1
+
+
+def _run_merge(agent, args, log: logging.Logger) -> int:
+    """合并多份 Markdown 报告并推送（或预览）"""
+    if args.loop:
+        log.warning("合并模式忽略 --loop，只推送一次")
+    if args.sources:
+        log.warning("合并模式忽略 --sources，不执行抓取")
+
+    file_paths = args.merge or []
+    merge_topic = (args.merge_topic or args.topic or "").strip()
+
+    if not file_paths:
+        log.error("未提供合并源文件：请使用 --merge file1.md file2.md")
+        return 2
+
+    # 支持逗号分隔的写法（兼容旧习惯）
+    expanded: list[str] = []
+    for fp in file_paths:
+        if "," in fp:
+            expanded.extend([s.strip() for s in fp.split(",") if s.strip()])
+        else:
+            expanded.append(fp)
+
+    try:
+        if args.dry_run:
+            html = agent.preview_merge(expanded, merge_topic=merge_topic)
+            preview = BASE_DIR / "preview.html"
+            preview.write_text(html, encoding="utf-8")
+            log.info("合并预览已写入 %s", preview)
+            print("\n" + "=" * 64)
+            print(f"合并主题：{merge_topic or '（自动生成）'}")
+            print(f"来源文件：{', '.join(expanded)}")
+            print(f"预览：{preview} ({len(html)} 字符)")
+            print("=" * 64 + "\n")
+            return 0
+
+        report = agent.push_merge(expanded, merge_topic=merge_topic, dry_run=args.dry_run)
+        log.info("合并报告推送%s：%s", "成功" if report.pushed else "失败", report.title)
+        return 0 if report.pushed else 1
+    except FileNotFoundError as exc:
+        log.error("%s", exc)
+        return 2
+    except Exception as exc:
+        log.exception("合并推送失败：%s", exc)
+        return 1
 
 
 def _run_manual(agent, args, log: logging.Logger) -> int:

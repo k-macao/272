@@ -157,6 +157,8 @@ python main.py --window 60              # 临时改时间窗口
 python main.py --sources iwencai,cninfo # 只跑指定源
 python main.py --verbose                # 调试日志
 python main.py --theme "人形机器人"      # 主题因子分析（见下一节）
+python main.py --merge a.md b.md --dry-run  # 合并多份报告后推送
+python main.py --generate-merged-report # 一键生成 merged_report.md
 ```
 
 ---
@@ -405,6 +407,36 @@ python main.py --manual --topic "机器人板块分析" --content "……" --dry
 
 ---
 
+## 合并报告推送（一对一，新增）
+
+当你有多份 Markdown 研报（例如 `goldwind_analysis.md` + `multi_factor_report.md`），
+想合并成一份精美的微信推送，可用新增的 `--merge` 能力：
+
+```bash
+# 预览合并（写入 preview.html，不推送）
+python main.py --merge goldwind_analysis.md multi_factor_report.md --merge-topic "多因子合并报告" --dry-run
+
+# 一键生成示范合并报告 merged_report.md
+python main.py --generate-merged-report --dry-run
+
+# 合并后直接一对一推送到微信（带 DeepSeek 提炼，如配有 DEEPSEEK_API_KEY）
+python main.py --merge goldwind_analysis.md multi_factor_report.md --merge-topic "合并报告"
+
+# 支持逗号分隔
+python main.py --merge goldwind_analysis.md,multi_factor_report.md --dry-run
+```
+
+实现 (`octopus/merge.py`)：
+
+- **溯源**：头部表格记录文件名、标题、字符数、SHA12 指纹
+- **去重**：同 hash 自动去重，`multi_factor_report.md` 已包含金风案例时自动标注
+- **兼容 AI**：如配 `DEEPSEEK_API_KEY`，合并后自动调用 DeepSeek 提炼摘要，与手动推送共用渲染卡片
+- **一对一**：合并推送恒为个人推送，不携带群组 topic
+
+GitHub Actions 同样支持：**Actions → 章鱼AI 合并报告推送 → Run workflow**，填入文件列表与主题即可。
+
+---
+
 ## 项目结构
 
 ```
@@ -417,6 +449,7 @@ octopus/
 ├── render.py         # 浅灰底 + 深蓝字的 HTML 渲染
 ├── notify.py         # PushPlus 推送
 ├── agent.py          # 主流程编排
+├── merge.py          # 新增：多报告合并、去重、溯源与一对一推送
 ├── webui.py          # 独立的手动推送网页（一对一）
 ├── sources/          # 十个情报源，各自独立
 └── factor/           # 主题因子分析（一对一，只输入主题）
@@ -427,7 +460,7 @@ octopus/
     ├── supervision.py  # A股市场监督管理：监管事件抓取与风险分级
     ├── compliance.py   # 输出端合规审查：违规荐股表述检测与中性化改写
     └── pipeline.py     # 全流程编排（含无大模型时的规则化降级解读）
-tests/                # 312 个测试，全离线
+tests/                # 355 个测试，全离线 (新增 test_merge.py)
 └── fixtures/         # 真实接口响应样本
 ```
 
