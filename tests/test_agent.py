@@ -16,7 +16,7 @@ from octopus.models import Item, TimeQuality
 from octopus.notify import PushPlus
 from octopus.sources import REGISTRY
 from octopus.sources.base import Source
-from octopus.timeutil import CN_TZ
+from octopus.timeutil import CN_TZ, in_quiet_hours
 
 REF = datetime(2026, 7, 27, 10, 30, 0, tzinfo=CN_TZ)
 
@@ -245,6 +245,86 @@ class TestAgentFlow(AgentTestCase):
         REGISTRY["a"] = make_source("a", "源A", ["会被记住的新闻"])
         self._agent(self._config()).run_once(ref=REF)
         self.assertTrue((self.base / "state" / "seen.json").exists())
+
+    def test_quiet_hours_pause_entire_round(self):
+        """免打扰时段（23:00 后）：不抓、不推、不记账，CI 视角视为成功（total=0）。"""
+        REGISTRY["a"] = make_source("a", "源A", ["夜间新闻"])
+        cfg = self._config(quiet_start="23:00", quiet_end="07:00")
+        agent = self._agent(cfg)
+
+        report = agent.run_once(ref=REF.replace(hour=23, minute=30))
+
+        self.assertEqual(report.skipped, "quiet")
+        self.assertEqual(report.total, 0)             # 上层据此退出码为 0
+        self.assertFalse(report.pushed)
+        self.assertEqual(len(report.results), 0)      # 根本没抓
+        self.assertEqual(len(report.groups), 0)
+        self.assertEqual(len(RecordingPush.sent), 0)  # 根本没推
+
+        # 次日 07:00 起床后自动恢复正常
+        morning = REF.replace(hour=7, minute=0) + timedelta(days=1)
+        resumed = agent.run_once(ref=morning)
+        self.assertEqual(resumed.skipped, "")
+        self.assertEqual(len(resumed.results), 1)     # 正常抓取
+
+    def test_quiet_hours_boundary_points(self):
+        """22:59 照常，23:00 整暂停，隔日 06:59 仍暂停，07:00 整恢复。"""
+        REGISTRY["a"] = make_source("a", "源A", ["新闻"])
+        agent = self._agent(self._config(quiet_start="23:00", quiet_end="07:00"))
+
+        def at(hour, minute, day_offset=0):
+            return REF.replace(hour=hour, minute=minute) + timedelta(days=day_offset)
+
+        self.assertEqual(agent.run_once(ref=at(22, 59)).skipped, "")
+        self.assertEqual(agent.run_once(ref=at(23, 0)).skipped, "quiet")
+        self.assertEqual(agent.run_once(ref=at(0, 30, day_offset=1)).skipped, "quiet")
+        self.assertEqual(agent.run_once(ref=at(6, 59, day_offset=1)).skipped, "quiet")
+        self.assertEqual(agent.run_once(ref=at(7, 0, day_offset=1)).skipped, "")
+
+    def test_quiet_hours_disabled_by_empty_config(self):
+        """两端留空即关闭免打扰——深夜照常跑。"""
+        REGISTRY["a"] = make_source("a", "源A", ["夜间新闻"])
+        cfg = self._config(quiet_start="", quiet_end="")
+        report = self._agent(cfg).run_once(ref=REF.replace(hour=23, minute=30))
+        self.assertEqual(report.skipped, "")
+        self.assertEqual(len(report.results), 1)
+
+    def test_quiet_hours_dry_run_still_previews(self):
+        """dry-run 是人工主动预览，不受免打扰限制。"""
+        REGISTRY["a"] = make_source("a", "源A", [])
+        cfg = self._config(quiet_start="23:00", quiet_end="07:00")
+        report = self._agent(cfg).run_once(ref=REF.replace(hour=23, minute=30), dry_run=True)
+        self.assertEqual(report.skipped, "")
+        self.assertEqual(len(report.results), 1)  # 照常抓取
+        self.assertTrue(report.html)              # 照常生成预览正文
+
+
+class TestQuietConfigChain(unittest.TestCase):
+    """config.yml 里的免打扰配置（引号可省）到实际判定要整条链走通。"""
+
+    def test_quoted_and_unquoted_clock_values(self):
+        night = REF.replace(hour=23, minute=30)
+        for literal in ("quiet_start: 23:00", 'quiet_start: "23:00"'):
+            with self.subTest(literal=literal), tempfile.TemporaryDirectory() as d:
+                path = Path(d) / "config.yml"
+                path.write_text(f"{literal}\nquiet_end: 07:00\n", encoding="utf-8")
+                cfg = Config.load(path)
+                self.assertTrue(
+                    in_quiet_hours(cfg.quiet_start, cfg.quiet_end, ref=night), literal)
+                self.assertFalse(
+                    in_quiet_hours(cfg.quiet_start, cfg.quiet_end, ref=REF), literal)
+
+    def test_quiet_hours_env_override(self):
+        import os
+        from unittest import mock
+
+        env = {"OCTOPUS_QUIET_START": "22:30", "OCTOPUS_QUIET_END": "06:45"}
+        with mock.patch.dict(os.environ, env):
+            cfg = Config.load(Path("/nonexistent/config.yml"))
+        ref = REF.replace(hour=23, minute=0)
+        self.assertTrue(in_quiet_hours(cfg.quiet_start, cfg.quiet_end, ref=ref))
+        edge = REF.replace(hour=6, minute=50)
+        self.assertFalse(in_quiet_hours(cfg.quiet_start, cfg.quiet_end, ref=edge))
 
 
 if __name__ == "__main__":

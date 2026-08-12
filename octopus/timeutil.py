@@ -206,3 +206,69 @@ def humanize(dt: datetime, *, ref: datetime | None = None) -> str:
 
 def stamp(dt: datetime | None = None) -> str:
     return f"{dt or now():%Y-%m-%d %H:%M:%S}"
+
+
+# --------------------------------------------------------------------------
+# 夜间免打扰时段（北京时间）
+# --------------------------------------------------------------------------
+
+_CLOCK = re.compile(r"^(\d{1,2})(?:[:：](\d{1,2}))?$")
+
+
+def parse_clock(value: object) -> tuple[int, int] | None:
+    """把"一天中的时刻"解析成 (时, 分)。
+
+    接受 "23:00" / "07:30" / "7" / 7；也兜住 PyYAML 把未加引号的
+    23:00 按 YAML 1.1 六十进制数字解析成整数 1380 的坑。
+    解析失败或越界（如 25:00、-1）返回 None。
+    """
+    if isinstance(value, bool):  # bool 是 int 的子类，先挡掉
+        return None
+    if isinstance(value, (int, float)):
+        num = int(value)
+        if 0 <= num <= 23:  # 裸数字直接当小时：7 -> 07:00
+            return num, 0
+        # YAML 1.1 六十进制：未加引号的 23:00 会被解析成 23*60 = 1380。
+        # 这种值必然 >= 60（最小 1:00 = 60），24–59 的裸整数仍是非法小时。
+        if num >= 60:
+            hour, minute = divmod(num, 60)
+            if hour <= 23:
+                return hour, minute
+        return None
+    m = _CLOCK.match(str(value).strip())
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2) or 0)
+    if 0 <= hour <= 23 and 0 <= minute <= 59:
+        return hour, minute
+    return None
+
+
+def in_quiet_hours(start: object, end: object, *, ref: datetime | None = None) -> bool:
+    """ref（默认当前北京时间）是否落在免打扰窗口 [start, end) 内。
+
+    支持跨夜：start > end 表示"当天 start 之后到次日 end 之前"
+    （如 23:00 → 07:00）。任一端解析失败、或起止相同，均视为未开启
+    免打扰，避免歧义配置造成"全天静默"。
+    """
+    s, e = parse_clock(start), parse_clock(end)
+    if s is None or e is None or s == e:
+        return False
+    base = ref or now()
+    cur = base.hour * 60 + base.minute
+    sm, em = s[0] * 60 + s[1], e[0] * 60 + e[1]
+    if sm < em:  # 当天内
+        return sm <= cur < em
+    return cur >= sm or cur < em  # 跨夜
+
+
+def quiet_remaining_seconds(start: object, end: object, *, ref: datetime | None = None) -> int:
+    """距免打扰结束还剩多少秒（供常驻循环直接睡到起床点）；不在免打扰时段返回 0。"""
+    if not in_quiet_hours(start, end, ref=ref):
+        return 0
+    e = parse_clock(end)
+    base = ref or now()
+    wake = base.replace(hour=e[0], minute=e[1], second=0, microsecond=0)
+    if wake <= base:
+        wake += timedelta(days=1)
+    return int((wake - base).total_seconds())
