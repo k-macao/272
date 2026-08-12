@@ -1,6 +1,6 @@
 # 部署：启用 GitHub Actions 定时抓取
 
-`scrape.yml` / `test.yml` / `manual_push.yml` 放在这里而不是 `.github/workflows/`，
+`scrape.yml` / `test.yml` / `manual_push.yml` / `theme_analysis.yml` 放在这里而不是 `.github/workflows/`，
 是因为本次提交所用的 GitHub App 没有 `workflows` 权限，无法直接推送 workflow 文件。
 
 **你只需要执行一次下面的命令，定时任务就会生效。**
@@ -31,6 +31,9 @@ git push
 | `DATAYES_TOKEN` | 萝卜投研 Cloud-Sso-Token | ❌ |
 | `DEEPSEEK_API_KEY` | DeepSeek 大模型 API Key（用于手动主题分析提炼与摘要） | ❌ |
 | `DEEPSEEK_MODEL` | DeepSeek 模型名（默认 `deepseek-v4-flash`） | ❌ |
+
+> 主题因子分析用的 `GITHUB_TOKEN` 无需手工配置，Actions 会自动注入内置 token；
+> 它只用于提高读取 microsoft/qlib 公共仓库的 API 限额。
 
 > 没配 `DATAYES_TOKEN` 时萝卜投研会自动降级为东财"机构盈利预测"，
 > 推送页脚会如实标注，不影响其余九个源。
@@ -73,6 +76,58 @@ python main.py --manual --topic "机器人板块分析" --content "……"   # �
 python main.py --manual --topic "机器人板块分析" < analysis.md     # 从文件读
 python main.py --manual                                            # 交互输入
 ```
+
+## 主题因子分析（一对一，只输入主题）
+
+`theme_analysis.yml` 同样是**独立的启动 yml**。与上面「手动主题推送」的区别是：
+手动推送要你自己写好分析内容，而这里**只需要输入一个主题**，
+系统自动完成板块匹配 → qlib 因子计算 → 监管动态核查 → AI 解读 → 合规审查 → 一对一推送。
+
+### 一、把 workflow 放进仓库（需要你手工复制一次）
+
+推送本次改动的 GitHub App 没有 `workflows` 权限，
+`.github/workflows/theme_analysis.yml` 推不上去，所以准备了**粘贴用过渡文件**：
+
+```
+deploy/github-workflows/theme_analysis.yml.txt   ← 打开它，复制分隔线之后的全部内容
+```
+
+**GitHub 网页操作**（最省事，不用拉代码）：
+
+1. 仓库 → **Add file → Create new file**；
+2. 文件名填 `.github/workflows/theme_analysis.yml`；
+3. 打开 `deploy/github-workflows/theme_analysis.yml.txt`，
+   把 `# ===== 分隔线：以下为正文 =====` **之后**的全部内容粘进去
+   （分隔线之前是操作说明，不要粘）；
+4. **Commit changes**。
+
+**或者本地命令行**（`.yml` 已在仓库里，直接拷）：
+
+```bash
+git checkout arena/019ff535-272
+mkdir -p .github/workflows
+cp deploy/github-workflows/theme_analysis.yml .github/workflows/
+git add .github/workflows/theme_analysis.yml
+git commit -m "启用主题因子分析 workflow"
+git push
+```
+
+> `.yml.txt` 分隔线之后的内容与 `.yml` **逐字节一致**，有测试
+> （`tests/test_factor_pipeline.py::TestWorkflowTemplate`）盯着，
+> 两者一旦脱节测试就会失败——不会出现「复制到的是旧版本」。
+
+### 二、运行
+
+1. 仓库 **Actions** → **章鱼AI 主题因子分析 → Run workflow**；
+2. `theme` 填主题（如 `人形机器人`、`证监会程序化交易新规`）；
+3. 可选：`stock_top`（取板块内成交额前几只）、`supervision_days`（监管回溯天数）、
+   `use_ai`（是否调大模型）、`dry_run`（只出预览，Artifacts 下载 `preview.html`）。
+
+首次建议 `dry_run` 选 `true` 跑一个你熟悉的板块，核对个股清单和因子读数是否合理，
+再改回 `false` 正式推送。
+
+该 workflow 同样只传 `PUSHPLUS_TOKEN`、不传 `PUSHPLUS_TOPIC`，保证一对一。
+未配置 `DEEPSEEK_API_KEY` 时自动降级为内置规则化解读，报告照常生成。
 
 ## 关于定时精度
 

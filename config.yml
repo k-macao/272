@@ -58,3 +58,19 @@ pushplus_topics: oai.1
 # DeepSeek 大模型提炼配置（选填，用于一对一手动主题分析推送）
 deepseek_api_key: ""
 deepseek_model: "deepseek-v4-flash"
+
+# --- 主题因子分析（一对一）：python main.py --theme "人形机器人" -------------
+# 只输入主题，自动完成 A股市场监督管理视角 + qlib Alpha158 因子模型分析。
+
+# 取板块内成交额前几只个股做因子计算。调大耗时与 token 都会上升。
+factor_stock_top: 6
+
+# 取多少根日线计算因子。60 日窗口的因子至少要 70 根，250 根约一年。
+factor_kline_limit: 250
+
+# 监管动态回溯天数（问询函/立案/异常波动等）
+supervision_days: 30
+
+# GitHub Token（选填）：拉取 microsoft/qlib 因子定义时用。
+# qlib 是公共仓库，不填也能读（未认证 60 次/小时），填了只是提高限额。
+github_token: ""

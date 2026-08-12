@@ -1,0 +1,124 @@
+# ============================================================================
+# 模版：把本文件全部内容粘贴到 .github/workflows/theme_analysis.yml（新建文件）
+#
+# GitHub 网页操作：
+#   仓库 → Add file → Create new file
+#   → 文件名填  .github/workflows/theme_analysis.yml
+#   → 粘贴下面 # ===== 分隔线之后的全部内容
+#   → Commit changes
+#
+# 这是一个全新的 workflow，不覆盖任何现有文件；与定时抓取 scrape.yml、
+# 手动推送 m.yml 相互独立，互不影响。
+#
+# 提交后：仓库 Actions → 左侧「章鱼AI 主题因子分析」→ Run workflow，
+# 填一个主题（如「人形机器人」）即可。首次建议 dry_run 选 true，
+# 跑完在 Artifacts 里下载 preview.html 确认效果，再改回 false 正式推送。
+#
+# 需要的 Secret（Settings → Secrets and variables → Actions）：
+#   PUSHPLUS_TOKEN     ✅ 必填
+#   DEEPSEEK_API_KEY   ❌ 选填，不填则自动降级为内置规则化解读
+#   DEEPSEEK_MODEL     ❌ 选填，默认 deepseek-v4-flash
+#   GITHUB_TOKEN       ❌ 无需配置，Actions 自动注入
+# 注意本 workflow 刻意不传 PUSHPLUS_TOPIC —— 主题分析恒为一对一，
+# 只发给 token 所属账号本人。
+# ============================================================================
+
+# ============================== 分隔线：以下为正文 ==========================
+
+# 章鱼AI 主题因子分析 —— 独立的启动 yml，与定时抓取、手动推送均相互独立。
+# 一对一：只输入主题，自动完成「A股市场监督管理视角 + qlib 因子模型分析」，
+# 报告只发给 token 所属账号本人，不携带群组 topic。
+name: 章鱼AI 主题因子分析
+
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: "分析主题（如：人形机器人 / 创业板 / 证监会程序化交易新规）"
+        required: true
+        type: string
+      stock_top:
+        description: "取板块内成交额前几只个股"
+        required: false
+        default: "6"
+        type: choice
+        options:
+          - "3"
+          - "6"
+          - "8"
+          - "10"
+      supervision_days:
+        description: "监管动态回溯天数"
+        required: false
+        default: "30"
+        type: string
+      use_ai:
+        description: "是否调用大模型解读（否则用内置规则化解读）"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      dry_run:
+        description: "只生成预览不推送"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+jobs:
+  theme-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 主题因子分析一对一推送
+        env:
+          # 只传 PUSHPLUS_TOKEN：主题分析推送强制一对一，不带群组 topic
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          # DeepSeek：优先新密钥，同时转发旧的智谱密钥做回落
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+          # 拉取 qlib 因子定义用的是公共仓库，内置 GITHUB_TOKEN 仅用于提高 API 限额
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          THEME: ${{ github.event.inputs.theme }}
+          TZ: Asia/Shanghai
+        run: |
+          ARGS=(--theme "$THEME"
+                --stock-top "${{ github.event.inputs.stock_top }}"
+                --supervision-days "${{ github.event.inputs.supervision_days }}")
+          if [ "${{ github.event.inputs.use_ai }}" = "false" ]; then
+            ARGS+=(--no-ai)
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          python main.py "${ARGS[@]}"
+
+      - name: 上传预览（仅 dry-run）
+        if: always() && github.event.inputs.dry_run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: theme-preview
+          path: preview.html
+          if-no-files-found: ignore
+          retention-days: 3

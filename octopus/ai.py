@@ -22,6 +22,28 @@ SYSTEM_PROMPT = """你是一位专业的金融及产业研究分析师和精炼�
 【核心结论】：用 1-2 句简明扼要的话概括最关键的结论或逻辑
 【关键信息提炼】：精炼列举 3-5 点最重要的要点、数据或细节"""
 
+# 主题因子分析：把「事实清单」交给大模型解读，模型只负责组织语言与归因，
+# 不负责编造数字 —— 所有数值都由本地因子引擎算好后传入。
+THEME_SYSTEM_PROMPT = """你是一位资深的 A 股量化研究员兼合规风控专员（章鱼 AI · 因子分析引擎）。
+用户会给你一份**已经计算完成**的结构化事实清单，内容包括：分析标的、
+基于 microsoft/qlib 开源 Alpha158 因子模型算出的多维因子读数、以及 A 股市场监督管理动态。
+
+你的任务是把这些事实解读成一份专业、克制、可直接阅读的研究简报。
+
+【硬性要求】
+1. 只能使用清单中提供的数字与事实，**严禁编造任何数据、股票代码、机构观点或政策原文**；
+   清单里没有的信息，就不要提及。
+2. 必须引用具体因子读数来支撑判断（例如"20日量价相关性 +0.52"），不要只说空话。
+3. 必须单独用一段说明监管与合规风险，如实反映清单里的监管事件。
+4. {compliance_rules}
+
+【输出格式】严格按以下五个模块输出，不要写开场白和客套话：
+【主题定位】：一句话说明该主题对应的板块/标的范围与当前市场位置
+【因子解读】：分维度解读因子读数，指出相互印证或彼此矛盾之处（4-6 点）
+【核心结论】：2-3 句话概括因子层面呈现的整体状态，措辞中性、不做方向性劝导
+【监管视角】：结合监管事件与政策敏感度，说明该主题的合规风险与需要关注的监管口径
+【风险提示】：3-4 点客观风险，包括因子模型本身的局限性"""
+
 
 class DeepSeekAI:
     def __init__(
@@ -51,7 +73,42 @@ class DeepSeekAI:
             return False, "输入内容为空"
 
         user_prompt = f"主题：{topic_str}\n\n内容：\n{content_str[:6000]}"
+        return self._chat(SYSTEM_PROMPT, user_prompt, temperature=0.3)
 
+    # ------------------------------------------------------------------
+    def analyze_theme(self, topic: str, facts: str) -> tuple[bool, str]:
+        """基于「已算好的事实清单」生成主题因子分析报告。
+
+        与 analyze() 的区别：这里的输入是本地因子引擎 + 监管抓取产出的
+        结构化事实，大模型只做解读与措辞，不接触原始数据，也就无从编造。
+
+        返回 (ok, 报告正文或错误信息)。
+        """
+        if not self.api_key:
+            return False, "未配置 DeepSeek API Key"
+        facts = (facts or "").strip()
+        if not facts:
+            return False, "事实清单为空"
+
+        from .factor.compliance import AI_COMPLIANCE_RULES
+
+        system = THEME_SYSTEM_PROMPT.format(compliance_rules=AI_COMPLIANCE_RULES)
+        user_prompt = (
+            f"请基于以下事实清单，为主题「{(topic or '未指定').strip()}」撰写分析报告。\n\n"
+            f"{facts[:12000]}"
+        )
+        return self._chat(system, user_prompt, temperature=0.4, max_tokens=2000)
+
+    # ------------------------------------------------------------------
+    def _chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        temperature: float = 0.3,
+        max_tokens: int | None = None,
+    ) -> tuple[bool, str]:
+        """统一的对话调用与错误收敛。"""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -59,11 +116,13 @@ class DeepSeekAI:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
             ],
-            "temperature": 0.3,
+            "temperature": temperature,
         }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
 
         try:
             data = self.http.post_json(DEEPSEEK_API_URL, payload, headers=headers)

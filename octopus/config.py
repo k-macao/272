@@ -27,6 +27,13 @@ DEFAULTS: dict[str, Any] = {
     "retries": 2,
     "sources": {},
     "disabled_sources": [],
+    # --- 主题因子分析（一对一）------------------------------------------
+    # 每次分析取板块内成交额前 N 只个股；再多 token 与耗时都会显著上升
+    "factor_stock_top": 6,
+    # 取多少根日线做因子计算：60 日窗口的因子至少要 70 根，250 根约一年
+    "factor_kline_limit": 250,
+    # 监管动态回溯天数
+    "supervision_days": 30,
 }
 
 
@@ -48,6 +55,12 @@ class Config:
     pushplus_topics: list[str] = field(default_factory=list)
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-v4-flash"
+    # GitHub Token（选填）：拉 qlib 因子定义时用，仅为提高 API 限额，
+    # 公共仓库不带 token 也能读（未认证 60 次/小时通常够用）。
+    github_token: str = ""
+    factor_stock_top: int = 6
+    factor_kline_limit: int = 250
+    supervision_days: int = 30
     sources: dict[str, dict] = field(default_factory=dict)
     disabled_sources: list[str] = field(default_factory=list)
 
@@ -69,6 +82,9 @@ class Config:
             "timeout": ("OCTOPUS_TIMEOUT", float),
             "quiet_start": ("OCTOPUS_QUIET_START", str),
             "quiet_end": ("OCTOPUS_QUIET_END", str),
+            "factor_stock_top": ("OCTOPUS_FACTOR_STOCK_TOP", int),
+            "factor_kline_limit": ("OCTOPUS_FACTOR_KLINE_LIMIT", int),
+            "supervision_days": ("OCTOPUS_SUPERVISION_DAYS", int),
         }
         for key, (env, caster) in env_map.items():
             raw = os.getenv(env)
@@ -115,6 +131,12 @@ class Config:
                 ).strip()
                 or "deepseek-v4-flash"
             ),
+            github_token=os.getenv(
+                "GITHUB_TOKEN", os.getenv("GH_TOKEN", str(data.get("github_token", "")))
+            ).strip(),
+            factor_stock_top=int(data.get("factor_stock_top", 6) or 6),
+            factor_kline_limit=int(data.get("factor_kline_limit", 250) or 250),
+            supervision_days=int(data.get("supervision_days", 30) or 30),
             sources=dict(data.get("sources") or {}),
             disabled_sources=_as_list(data.get("disabled_sources")),
         )

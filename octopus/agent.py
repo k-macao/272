@@ -12,7 +12,14 @@ from .config import Config
 from .http import Http
 from .models import Item, SourceResult
 from .notify import PushPlus
-from .render import render_html, render_manual, render_manual_title, render_title
+from .render import (
+    render_html,
+    render_manual,
+    render_manual_title,
+    render_theme,
+    render_theme_title,
+    render_title,
+)
 from .sources import REGISTRY
 from .state import SeenStore
 from .timeutil import in_quiet_hours, now, stamp
@@ -31,6 +38,9 @@ class RunReport:
     ref: datetime
     skipped: str = ""
     """跳过原因标记："quiet" = 本轮因夜间免打扰被整体跳过（未抓、未推、未记账）。"""
+
+    analysis: object | None = None
+    """主题因子分析结果（仅 push_theme 填充，其余流程为 None）。"""
 
     @property
     def failures(self) -> list[SourceResult]:
@@ -238,6 +248,76 @@ class Agent:
             title=title,
             ref=ref,
         )
+
+    # ------------------------------------------------------------------
+    # 主题因子分析（一对一）：只输入主题，其余全自动
+    # ------------------------------------------------------------------
+    def _pipeline(self):
+        """惰性构造主题分析流水线（避免抓取模式白白 import）。"""
+        from .factor.pipeline import ThemePipeline
+
+        return ThemePipeline(
+            self.http,
+            base_dir=self.base_dir,
+            deepseek_api_key=self.config.deepseek_api_key,
+            deepseek_model=self.config.deepseek_model,
+            github_token=self.config.github_token,
+            stock_top=self.config.factor_stock_top,
+            kline_limit=self.config.factor_kline_limit,
+            supervision_days=self.config.supervision_days,
+        )
+
+    def analyze_theme(
+        self,
+        topic: str,
+        *,
+        ref: datetime | None = None,
+        use_ai: bool = True,
+    ):
+        """跑一次主题分析，返回 ThemeAnalysis（不推送）。"""
+        return self._pipeline().run(topic, ref=ref or now(), use_ai=use_ai)
+
+    def preview_theme(
+        self,
+        topic: str,
+        *,
+        ref: datetime | None = None,
+        use_ai: bool = True,
+    ) -> str:
+        """生成主题因子分析的预览 HTML 正文。"""
+        ref = ref or now()
+        analysis = self.analyze_theme(topic, ref=ref, use_ai=use_ai)
+        return render_theme(analysis, ref=ref)
+
+    def push_theme(
+        self,
+        topic: str,
+        *,
+        dry_run: bool = False,
+        ref: datetime | None = None,
+        use_ai: bool = True,
+    ) -> RunReport:
+        """主题因子分析推送：输入主题 -> 监管+因子分析 -> 一对一推送。
+
+        与 push_manual 一样恒为**一对一**（PushPlus 个人推送，不带群组 topic）。
+        """
+        ref = ref or now()
+        analysis = self.analyze_theme(topic, ref=ref, use_ai=use_ai)
+        html = render_theme(analysis, ref=ref)
+        title = render_theme_title(topic, analysis, ref=ref)
+        pushed = self._push(title, html, dry_run=dry_run, topics=[])
+        log.info("=== 主题因子分析：推送 %s", "成功" if pushed else "未执行/失败")
+        report = RunReport(
+            total=len(analysis.profiles),
+            pushed=pushed,
+            groups=[],
+            results=[],
+            html=html,
+            title=title,
+            ref=ref,
+        )
+        report.analysis = analysis  # type: ignore[attr-defined]
+        return report
 
     # ------------------------------------------------------------------
     def _push(self, title: str, html: str, *, dry_run: bool, topics: list[str] | None = None) -> bool:
