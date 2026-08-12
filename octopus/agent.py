@@ -174,6 +174,84 @@ class Agent:
         return results
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 合并推送：多份 Markdown 合并 -> 渲染 -> 一对一推送
+    # ------------------------------------------------------------------
+    def _load_merge_sources(
+        self, file_paths: list[str], merge_topic: str
+    ) -> tuple[str, str, list[str], str, str]:
+        from .merge import merge_markdowns
+
+        if not file_paths:
+            raise ValueError("未提供合并源文件")
+        report = merge_markdowns(file_paths, merge_topic=merge_topic or "")
+        # 可选 DeepSeek 提炼
+        ai_summary, ai_model = ("", "")
+        if self.config.deepseek_api_key:
+            ai_summary, ai_model = self._refine_manual(report.topic, report.content)
+        return report.topic, report.content, report.notes, ai_summary, ai_model
+
+    def preview_merge(
+        self,
+        file_paths: list[str],
+        merge_topic: str = "",
+        *,
+        ref: datetime | None = None,
+        use_ai: bool = True,
+    ) -> str:
+        from .merge import merge_markdowns
+
+        ref = ref or now()
+        merged = merge_markdowns(file_paths, merge_topic=merge_topic, ref=ref)
+        if use_ai:
+            ai_summary, ai_model = self._refine_manual(merged.topic, merged.content)
+        else:
+            ai_summary, ai_model = "", ""
+        return render_manual(
+            merged.topic,
+            merged.content,
+            ref=ref,
+            ai_summary=ai_summary,
+            ai_model=ai_model,
+        )
+
+    def push_merge(
+        self,
+        file_paths: list[str],
+        merge_topic: str = "",
+        *,
+        dry_run: bool = False,
+        ref: datetime | None = None,
+        use_ai: bool = True,
+    ) -> RunReport:
+        from .merge import merge_markdowns
+
+        ref = ref or now()
+        merged = merge_markdowns(file_paths, merge_topic=merge_topic, ref=ref)
+        ai_summary, ai_model = ("", "")
+        if use_ai:
+            ai_summary, ai_model = self._refine_manual(merged.topic, merged.content) if use_ai else ("", "")
+
+        html = render_manual(
+            merged.topic,
+            merged.content,
+            ref=ref,
+            ai_summary=ai_summary,
+            ai_model=ai_model,
+        )
+        title = render_manual_title(merged.topic, ref)
+        pushed = self._push(title, html, dry_run=dry_run, topics=[])
+        log.info("=== 合并报告推送：%d 源 -> %s：%s", len(merged.sources), merged.topic, "成功" if pushed else "未执行/失败")
+        return RunReport(
+            total=len(merged.sources),
+            pushed=pushed,
+            groups=[],
+            results=[],
+            html=html,
+            title=title,
+            ref=ref,
+        )
+
     def _refine_manual(self, topic: str, content: str) -> tuple[str, str]:
         """按需调用 DeepSeek 大模型 API 提炼主题内容。"""
         if not self.config.deepseek_api_key or not (content or "").strip():

@@ -9,7 +9,8 @@ from __future__ import annotations
 from .agent import Agent
 from .ai import DeepSeekAI
 from .config import Config
+from .merge import MergedReport, merge_markdowns
 
 __version__ = "1.0.0"
 __author__ = "章鱼 AI"
-__all__ = ["Agent", "Config", "DeepSeekAI"]
+__all__ = ["Agent", "Config", "DeepSeekAI", "MergedReport", "merge_markdowns"]
