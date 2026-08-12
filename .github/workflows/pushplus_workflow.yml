@@ -1,0 +1,80 @@
+# 过渡模板：请将本文件全部内容复制到 .github/workflows/pushplus_workflow.yml
+# 创建成功后，请删除旧的 .github/workflows/m.yml，避免 Actions 出现两个重复入口。
+# 本文件使用 .txt 后缀，仅为绕过 GitHub App 的 Workflows 写入权限限制。
+
+# PushPlus 手动主题推送 —— 独立的启动 workflow，与定时抓取（scrape.yml）完全独立。
+# 一对一：手动推送只发给自己（token 所属账号），不携带群组 topic。
+name: 章鱼AI 手动主题推送
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "AI 分析主题标题（一对一推送到自己微信）"
+        required: false
+        default: ""
+        type: string
+      content:
+        description: "AI 分析内容（支持多行，直接粘贴分析全文）"
+        required: true
+        type: string
+      dry_run:
+        description: "只生成预览不推送"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: write
+
+jobs:
+  manual-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 手动主题分析一对一推送
+        env:
+          # 只传 PUSHPLUS_TOKEN：手动推送强制一对一，忽略 PUSHPLUS_TOPIC
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          # DeepSeek：优先新密钥；同时转发旧的智谱密钥做回落，
+          # 兼容尚未改名的历史 Secret，切换期间 AI 提炼不中断。
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+          DEEPSEEK_FALLBACK_MODELS: ${{ secrets.DEEPSEEK_FALLBACK_MODELS }}
+          DEEPSEEK_THINKING: ${{ secrets.DEEPSEEK_THINKING }}
+          ZHIPU_MODEL: ${{ secrets.ZHIPU_MODEL }}
+          MANUAL_TOPIC: ${{ github.event.inputs.topic }}
+          MANUAL_CONTENT: ${{ github.event.inputs.content }}
+          TZ: Asia/Shanghai
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python main.py --manual --topic "$MANUAL_TOPIC" --content "$MANUAL_CONTENT" --dry-run
+          else
+            python main.py --manual --topic "$MANUAL_TOPIC" --content "$MANUAL_CONTENT"
+          fi
+
+      - name: 上传预览（仅 dry-run）
+        if: always() && github.event.inputs.dry_run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: preview
+          path: preview.html
+          if-no-files-found: ignore
+          retention-days: 3
