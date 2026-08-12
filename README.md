@@ -359,11 +359,14 @@ python main.py --manual --topic "机器人板块分析" --content "……" --dry
 
 ### 方式三：独立的启动 yml（GitHub Actions 手动触发）
 
-`deploy/github-workflows/manual_push.yml` 是**独立于定时抓取**的 workflow：
-仓库 **Actions → 章鱼AI 手动主题推送 → Run workflow**，在表单里填主题与多行内容
-即可一对一推送（`dry_run: true` 可先出预览再下载）。该 workflow 只传
-`PUSHPLUS_TOKEN`，不传群组 topic，保证一对一。与 scrape 一样需要手动
-`cp` 到 `.github/workflows/` 后生效（见 `deploy/README.md`）。
+`deploy/github-workflows/pushplus_workflow.yml.txt` 是可直接复制的过渡文件。
+由于 GitHub App 没有 Workflows 写入权限，请打开该文件并复制全部内容，在 GitHub
+网页中新建 `.github/workflows/pushplus_workflow.yml` 后粘贴提交。确认新入口可用后，
+删除旧的 `.github/workflows/m.yml`，避免 Actions 出现两个重复入口。
+
+启用后，仓库 **Actions → 章鱼AI 手动主题推送 → Run workflow**，在表单里填主题与
+多行内容即可一对一推送（`dry_run: true` 可先出预览再下载）。该 workflow 只传
+`PUSHPLUS_TOKEN`，不传群组 topic，保证一对一。
 
 ---
 
