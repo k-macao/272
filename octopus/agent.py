@@ -15,7 +15,7 @@ from .notify import PushPlus
 from .render import render_html, render_manual, render_manual_title, render_title
 from .sources import REGISTRY
 from .state import SeenStore
-from .timeutil import now, stamp
+from .timeutil import in_quiet_hours, now, stamp
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +29,8 @@ class RunReport:
     html: str
     title: str
     ref: datetime
+    skipped: str = ""
+    """跳过原因标记："quiet" = 本轮因夜间免打扰被整体跳过（未抓、未推、未记账）。"""
 
     @property
     def failures(self) -> list[SourceResult]:
@@ -46,6 +48,24 @@ class Agent:
     # ------------------------------------------------------------------
     def run_once(self, *, dry_run: bool = False, ref: datetime | None = None) -> RunReport:
         ref = ref or now()
+        if in_quiet_hours(self.config.quiet_start, self.config.quiet_end, ref=ref):
+            msg = (f"夜间免打扰（{self.config.quiet_start}–{self.config.quiet_end} 北京时间），"
+                   f"当前 {stamp(ref)}")
+            if dry_run:
+                # dry-run 是人工主动预览，不受免打扰限制（本来也不会真推）
+                log.info("=== %s；dry-run 照常抓取仅生成预览", msg)
+            else:
+                log.info("=== %s，本轮暂停抓取与推送，%s 起床", msg, self.config.quiet_end)
+                return RunReport(
+                    total=0,
+                    pushed=False,
+                    groups=[],
+                    results=[],
+                    html="",
+                    title=f"免打扰暂停（至次日 {self.config.quiet_end}）",
+                    ref=ref,
+                    skipped="quiet",
+                )
         log.info("=== 开始扫描 %s（窗口 %d 分钟，已记录 %d 条历史）",
                  stamp(ref), self.config.window_minutes, len(self.seen))
 

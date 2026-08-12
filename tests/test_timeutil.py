@@ -14,8 +14,11 @@ from octopus.timeutil import (
     CN_TZ,
     age_minutes,
     humanize,
+    in_quiet_hours,
     is_future,
     parse,
+    parse_clock,
+    quiet_remaining_seconds,
     within_window,
 )
 
@@ -171,6 +174,78 @@ class TestHumanize(unittest.TestCase):
 
     def test_older(self):
         self.assertEqual(humanize(REF - timedelta(days=3), ref=REF), "07-24 10:30")
+
+
+class TestParseClock(unittest.TestCase):
+    def test_string_forms(self):
+        self.assertEqual(parse_clock("23:00"), (23, 0))
+        self.assertEqual(parse_clock("07:30"), (7, 30))
+        self.assertEqual(parse_clock("7"), (7, 0))
+        self.assertEqual(parse_clock(" 23：00 "), (23, 0))  # 全角冒号也认
+
+    def test_number_forms(self):
+        self.assertEqual(parse_clock(7), (7, 0))
+        self.assertEqual(parse_clock(23), (23, 0))
+
+    def test_yaml_unquoted_sexagesimal(self):
+        """PyYAML 会把未加引号的 23:00 解析成六十进制整数 1380（23*60），兜住。"""
+        self.assertEqual(parse_clock(1380), (23, 0))
+        self.assertEqual(parse_clock(420), (7, 0))
+        self.assertIsNone(parse_clock(1500))  # 25:00 越界
+
+    def test_invalid(self):
+        for bad in ("", " ", None, "abc", "25:00", "23:60", "-1", -1, True, 24):
+            self.assertIsNone(parse_clock(bad), f"应当判非法：{bad!r}")
+
+
+class TestQuietHours(unittest.TestCase):
+    """夜间免打扰：北京时间 23:00 后暂停、次日 07:00 起床。"""
+
+    START, END = "23:00", "07:00"
+
+    @staticmethod
+    def _ref(hour: int, minute: int = 0) -> datetime:
+        return datetime(2026, 7, 27, hour, minute, 0, tzinfo=CN_TZ)
+
+    def _quiet(self, hour: int, minute: int = 0) -> bool:
+        return in_quiet_hours(self.START, self.END, ref=self._ref(hour, minute))
+
+    def test_overnight_boundaries(self):
+        self.assertFalse(self._quiet(22, 59))  # 还没到点
+        self.assertTrue(self._quiet(23, 0))    # 到点即睡
+        self.assertTrue(self._quiet(23, 59))
+        self.assertTrue(self._quiet(0, 0))     # 跨午夜
+        self.assertTrue(self._quiet(6, 59))
+        self.assertFalse(self._quiet(7, 0))    # 07:00 起床
+        self.assertFalse(self._quiet(10, 30))
+        self.assertFalse(self._quiet(15, 0))
+
+    def test_same_day_window(self):
+        ref = self._ref
+        self.assertFalse(in_quiet_hours("09:00", "12:00", ref=ref(8, 59)))
+        self.assertTrue(in_quiet_hours("09:00", "12:00", ref=ref(9, 0)))
+        self.assertTrue(in_quiet_hours("09:00", "12:00", ref=ref(11, 59)))
+        self.assertFalse(in_quiet_hours("09:00", "12:00", ref=ref(12, 0)))
+
+    def test_disabled_forms(self):
+        """任一端留空/非法、或起止相同，一律视为未开启，避免歧义造成全天静默。"""
+        night = self._ref(23, 30)
+        self.assertFalse(in_quiet_hours("", "07:00", ref=night))
+        self.assertFalse(in_quiet_hours("23:00", "", ref=night))
+        self.assertFalse(in_quiet_hours("23:00", "23:00", ref=night))
+        self.assertFalse(in_quiet_hours("垃圾", "07:00", ref=night))
+
+    def test_remaining_seconds(self):
+        self.assertEqual(
+            quiet_remaining_seconds(self.START, self.END, ref=self._ref(23, 30)),
+            7 * 3600 + 30 * 60,  # 23:30 -> 07:00
+        )
+        self.assertEqual(
+            quiet_remaining_seconds(self.START, self.END, ref=self._ref(6, 0)),
+            3600,
+        )
+        self.assertEqual(quiet_remaining_seconds(self.START, self.END, ref=self._ref(10, 30)), 0)
+        self.assertEqual(quiet_remaining_seconds("", "", ref=self._ref(23, 30)), 0)
 
 
 if __name__ == "__main__":

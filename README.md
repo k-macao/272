@@ -103,6 +103,25 @@ git add .github/workflows && git commit -m "启用定时抓取" && git push
 
 ---
 
+## 夜间免打扰（23:00 后暂停推送，07:00 起床）
+
+北京时间 **23:00 至次日 07:00** 为免打扰时段（`quiet_start` – `quiet_end`）：
+
+- **定时轮次整体跳过**：不抓取、不推送、不动去重账本，日志只留一行
+  "本轮暂停抓取与推送"。GitHub Actions 的 cron 照常触发，进入后秒级退出（成功态）。
+- **`--loop` 常驻模式直接睡到起床点**：23:00 后不再每 30 分钟空转，一觉到 07:00 再起轮。
+- **起床后不补推隔夜内容**：时间窗口 180 分钟，隔夜条目本就已过期——早晨第一轮只推当下新鲜的。
+- **人工操作不受限**：`--dry-run` 本地预览照常生成；手动推送（`--manual` / `--manual-web` / 手动 workflow）随时可用。
+
+关闭或调整（`config.yml`，环境变量 `OCTOPUS_QUIET_START` / `OCTOPUS_QUIET_END` 优先）：
+
+```yaml
+quiet_start: "23:00"   # 留空即关闭；两端相同也视为关闭
+quiet_end: "07:00"     # 建议加引号，防止 YAML 把未加引号的 23:00 解析成六十进制数
+```
+
+---
+
 ## 配置
 
 `config.yml` 可调项（环境变量优先级更高）：
@@ -110,6 +129,8 @@ git add .github/workflows && git commit -m "启用定时抓取" && git push
 ```yaml
 window_minutes: 180        # 时间窗口
 interval_minutes: 30       # 循环间隔
+quiet_start: "23:00"       # 夜间免打扰开始（北京时间），留空关闭
+quiet_end: "07:00"         # 夜间免打扰结束（起床点）
 max_items_per_source: 0    # 单源条数上限；0 = 不限，抓取内容全量进推送
 max_items_total: 0         # 单条推送总条数上限；0 = 不限（一条推送含全部抓取内容）
 push_when_empty: true      # 无新增时仍推一条"本轮无新增"播报

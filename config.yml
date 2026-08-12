@@ -7,6 +7,12 @@ window_minutes: 180
 # 循环模式下的抓取间隔
 interval_minutes: 30
 
+# 夜间免打扰（北京时间）：quiet_start 之后到次日 quiet_end 之前暂停抓取与推送。
+# 23:00 睡、07:00 起。任一端留空、或两端相同即关闭免打扰。
+# --dry-run 本地预览与手动推送（--manual / --manual-web）不受影响。
+quiet_start: "23:00"
+quiet_end: "07:00"
+
 # 每个源单轮最多推几条。0 = 不限：通过时间校验的条目全量进入推送。
 # 想防刷屏时改回正整数（如 8）即可。
 max_items_per_source: 0

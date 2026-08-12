@@ -19,11 +19,12 @@ import logging
 import signal
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 
 from octopus.agent import Agent
 from octopus.config import Config
-from octopus.timeutil import now, stamp
+from octopus.timeutil import now, quiet_remaining_seconds, stamp
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -131,8 +132,17 @@ def main(argv: list[str] | None = None) -> int:
                 break
 
             sleep_s = max(60, config.interval_minutes * 60)
-            log.info("休眠 %d 分钟，下轮约 %s", config.interval_minutes,
-                     stamp(now().replace(microsecond=0)))
+            # 免打扰时段（dry-run 不受限）：不每 30 分钟空转，一觉睡到起床点。
+            quiet_s = 0 if args.dry_run else quiet_remaining_seconds(
+                config.quiet_start, config.quiet_end)
+            if quiet_s:
+                sleep_s = max(sleep_s, quiet_s + 10)  # 多睡几秒，稳稳越过起床边界
+                log.info("夜间免打扰（%s–%s），直接睡到起床点，下轮约 %s",
+                         config.quiet_start, config.quiet_end,
+                         stamp(now().replace(microsecond=0) + timedelta(seconds=sleep_s)))
+            else:
+                log.info("休眠 %d 分钟，下轮约 %s", config.interval_minutes,
+                         stamp(now().replace(microsecond=0) + timedelta(seconds=sleep_s)))
             slept = 0
             while slept < sleep_s and not _stop:
                 time.sleep(min(5, sleep_s - slept))

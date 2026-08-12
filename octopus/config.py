@@ -13,6 +13,10 @@ DEFAULTS: dict[str, Any] = {
     # 抓取间隔 30 分钟，窗口放宽到 180 分钟，配合去重避免边界漏推
     "window_minutes": 180,
     "interval_minutes": 30,
+    # 夜间免打扰（北京时间）：quiet_start 之后到次日 quiet_end 之前
+    # 暂停抓取与推送；任一端留空或两端相同即关闭。
+    "quiet_start": "23:00",
+    "quiet_end": "07:00",
     # 条数上限一律 0 = 不限：一条推送包含全部通过时间校验的抓取内容。
     # 代码兜底默认也遵循这个语义；想限量时在 config.yml 里填正整数。
     "max_items_per_source": 0,
@@ -30,6 +34,10 @@ DEFAULTS: dict[str, Any] = {
 class Config:
     window_minutes: int = 180
     interval_minutes: int = 30
+    # 免打扰时刻允许 int，是因为 PyYAML 会把未加引号的 23:00
+    # 解析成六十进制整数 1380（timeutil.parse_clock 会识别回来）
+    quiet_start: str | int = "23:00"   # 免打扰开始（北京时间），跨夜到 quiet_end
+    quiet_end: str | int = "07:00"     # 免打扰结束（起床），留空/与 start 相同 = 关闭
     max_items_per_source: int = 0  # 0 = 单源不限条数
     max_items_total: int = 0       # 0 = 整条推送不限总条数
     push_when_empty: bool = True
@@ -59,6 +67,8 @@ class Config:
             "max_items_total": ("OCTOPUS_MAX_TOTAL", int),
             "state_file": ("OCTOPUS_STATE_FILE", str),
             "timeout": ("OCTOPUS_TIMEOUT", float),
+            "quiet_start": ("OCTOPUS_QUIET_START", str),
+            "quiet_end": ("OCTOPUS_QUIET_END", str),
         }
         for key, (env, caster) in env_map.items():
             raw = os.getenv(env)
@@ -79,6 +89,8 @@ class Config:
         return cls(
             window_minutes=int(data["window_minutes"]),
             interval_minutes=int(data["interval_minutes"]),
+            quiet_start=_clock_value(data.get("quiet_start")),
+            quiet_end=_clock_value(data.get("quiet_end")),
             max_items_per_source=int(data["max_items_per_source"]),
             max_items_total=int(data["max_items_total"]),
             push_when_empty=bool(data["push_when_empty"]),
@@ -132,6 +144,21 @@ class Config:
         if isinstance(raw, (list, tuple)):
             return [str(t).strip() for t in raw if str(t).strip()]
         return []
+
+
+def _clock_value(value: Any) -> str | int:
+    """规范化免打扰时刻：None / 空白串 -> \"\"（关闭免打扰）；其余保留原类型。
+
+    保留 int 的原因：未加引号的 23:00 可能被 PyYAML 按六十进制解析成
+    整数 1380，由 timeutil.parse_clock 识别回来；字符串则去掉外层空白与引号。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, (int, float)):
+        return int(value)
+    return str(value).strip().strip("'\"")
 
 
 def _as_list(value: Any) -> list[str]:
