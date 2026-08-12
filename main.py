@@ -6,6 +6,8 @@
     python main.py --dry-run       # 只抓不推，正文存到 preview.html
     python main.py --loop          # 常驻，每 30 分钟一轮
     python main.py --window 60     # 临时改时间窗口（分钟）
+    python main.py --theme "机器人"        # 主题因子分析：只输入主题，自动分析并一对一推送
+    python main.py --theme "机器人" --dry-run   # 只出预览，写入 preview.html
     python main.py --manual        # 手动模式：交互输入 AI 分析主题/内容并推送
     python main.py --manual --topic "机器人板块分析" --content "……"   # 参数直给
     python main.py --manual --topic "机器人板块分析" < analysis.md     # 从文件读内容
@@ -55,6 +57,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--topic", default="", help="手动模式的主题标题（可选，也可交互输入）")
     p.add_argument("--content", default=None,
                    help="手动模式的分析内容（可选；缺省从 stdin 读取，终端里可交互输入）")
+    # --- 主题因子分析（只输入主题，全自动）---------------------------------
+    p.add_argument("--theme", default="",
+                   help="主题因子分析：只输入主题，自动跑 A股监管视角 + qlib 因子模型并推送")
+    p.add_argument("--no-ai", action="store_true",
+                   help="主题分析不调用大模型，只用内置规则化解读")
+    p.add_argument("--stock-top", type=int, default=None,
+                   help="主题分析取板块内前几只个股（默认 6）")
+    p.add_argument("--supervision-days", type=int, default=None,
+                   help="监管动态回溯天数（默认 30）")
     p.add_argument("--manual-web", action="store_true",
                    help="启动独立的手动推送网页（默认 http://127.0.0.1:8765）")
     p.add_argument("--host", default="127.0.0.1", help="网页服务监听地址（默认 127.0.0.1）")
@@ -90,6 +101,10 @@ def main(argv: list[str] | None = None) -> int:
         config.deepseek_api_key = args.deepseek_api_key.strip()
     if args.deepseek_model:
         config.deepseek_model = args.deepseek_model.strip()
+    if args.stock_top:
+        config.factor_stock_top = args.stock_top
+    if args.supervision_days:
+        config.supervision_days = args.supervision_days
     if args.sources:
         from octopus.sources import REGISTRY
 
@@ -113,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.manual_web:
             return _run_manual_web(agent, args, log)
+        if args.theme:
+            return _run_theme(agent, args, log)
         if args.manual or args.content is not None or args.topic:
             return _run_manual(agent, args, log)
 
@@ -196,6 +213,64 @@ def _read_manual_input(args) -> tuple[str, str]:
             print("请输入 AI 分析内容（多行，输入完成后按 Ctrl+D 结束）：", flush=True)
         content = sys.stdin.read()
     return topic, content or ""
+
+
+def _run_theme(agent, args, log: logging.Logger) -> int:
+    """主题因子分析：输入主题 -> A股监管视角 + qlib 因子模型 -> AI 报告 -> 一对一推送。"""
+    if args.loop:
+        log.warning("主题分析模式忽略 --loop，只推送一次")
+    if args.sources:
+        log.warning("主题分析模式忽略 --sources，不执行情报抓取")
+
+    topic = args.theme.strip()
+    use_ai = not args.no_ai
+
+    if args.dry_run:
+        analysis = agent.analyze_theme(topic, use_ai=use_ai)
+        from octopus.render import render_theme, render_theme_title
+
+        html = render_theme(analysis)
+        title = render_theme_title(topic, analysis)
+        preview = BASE_DIR / "preview.html"
+        preview.write_text(html, encoding="utf-8")
+        log.info("预览已写入 %s（标题：%s）", preview, title)
+        _print_theme_summary(topic, analysis, title, preview)
+        return 0
+
+    report = agent.push_theme(topic, use_ai=use_ai)
+    analysis = getattr(report, "analysis", None)
+    if analysis is not None:
+        _print_theme_summary(topic, analysis, report.title, None)
+    log.info("主题因子分析推送%s：%s", "成功" if report.pushed else "失败", report.title)
+    return 0 if report.pushed else 1
+
+
+def _print_theme_summary(topic, analysis, title: str, preview) -> None:
+    print("\n" + "=" * 64)
+    print(f"主题：{topic or '（未指定）'}")
+    print(f"标题：{title}")
+    print("=" * 64)
+    board = analysis.market.board
+    print(f"命中板块：{board.name}（{board.kind}，{board.change:+.2f}%）" if board else "命中板块：无")
+    print(f"因子模型：{analysis.model.provenance}")
+    print(f"行情截至：{analysis.data_date or '—'}")
+    print(f"解读引擎：{analysis.ai_model or '内置规则化解读'}")
+    print("-" * 64)
+    for profile in analysis.all_profiles:
+        composite = "—" if profile.composite is None else f"{profile.composite:5.1f}"
+        print(f"  {profile.name:<12s} 综合 {composite}  {profile.stance}")
+        for dim in profile.dimensions:
+            score = "  —" if dim.score is None else f"{dim.score:3.0f}"
+            print(f"      {dim.label:<8s} {score}  {dim.level}")
+    print("-" * 64)
+    print(f"监管：{analysis.supervision.summary_line()}")
+    if analysis.compliance_result is not None:
+        print(f"合规：{analysis.compliance_result.summary()}")
+    for note in analysis.notes:
+        print(f"说明：{note}")
+    if preview is not None:
+        print(f"\n正文已写入 {preview}")
+    print()
 
 
 def _run_manual(agent, args, log: logging.Logger) -> int:
