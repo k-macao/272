@@ -653,6 +653,55 @@ def _markdown_cards(
     return cards or [_manual_card(fallback_title, content)]
 
 
+def _push_report_markdown(content: str) -> str:
+    """只保留分析、数据与结论，去掉合并元数据和实现过程。"""
+    skip_titles = {"目录", "合并说明与来源追溯"}
+    skip_title_terms = (
+        "免费开源金融数据库",
+        "因子库构建与数学公式",
+        "数据清洗与特征工程",
+        "Prompt 架构",
+        "投研检查清单",
+    )
+    skip_line_terms = (
+        "免费开源金融数据库",
+        "多因子库设计",
+        "数据预处理与 A 股特征工程",
+        "防空泛 AI 研报 Prompt",
+        "方法论层",
+        "接入规范与代码实现",
+    )
+    skipping = False
+    in_fence = False
+    cleaned: list[str] = []
+    for line in (content or "").splitlines():
+        stripped = line.strip()
+        if _FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+
+        heading = _HEADING.match(stripped)
+        if heading and len(heading.group(1)) <= 2:
+            title = heading.group(2).strip()
+            if title in skip_titles or any(term in title for term in skip_title_terms):
+                skipping = True
+                continue
+            skipping = False
+            source = re.match(r"原始报告\s*\d+\s*[：:]\s*(.+)", title)
+            if source:
+                line = f"## {source.group(1).strip()}"
+        if skipping:
+            continue
+        if stripped.startswith("> **合并时间**") or stripped.startswith("> **文件名**"):
+            continue
+        if any(term in line for term in skip_line_terms):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
 def render_merge(
     topic: str,
     content: str,
@@ -664,9 +713,8 @@ def render_merge(
 ) -> str:
     """把合并后的 Markdown 渲染成适合微信窄屏阅读的章节卡片。"""
     topic = (topic or "合并研报").strip()
-    content = (content or "").strip()
+    content = _push_report_markdown(content)
     ai_summary = (ai_summary or "").strip()
-    source_text = f"{source_count} 份来源" if source_count else "多份来源"
     cards = [
         (
             f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
@@ -677,21 +725,16 @@ def render_merge(
             f'<div style="font-size:16px;font-weight:600;color:{ACCENT};margin-top:6px;">'
             f"{html.escape(topic)}</div>"
             f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:6px;">'
-            f"{source_text} · 按章节整理 · {stamp(ref)}（北京时间）</div></div>"
+            f"{stamp(ref)}（北京时间）</div></div>"
         )
     ]
     if ai_summary:
         cards.append(_manual_ai_card(ai_summary, ai_model))
-    # Markdown 目录在微信中既不能稳定跳转又重复占屏，正文按卡片排列已自带导航。
-    cards.extend(
-        _markdown_cards(topic, content, skip_sections={"目录"}, drop_preamble=True)
-    )
+    cards.extend(_markdown_cards(topic, content))
     cards.append(
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};border-radius:8px;'
         f'padding:9px 11px;font-size:11px;color:{NAVY_SOFT};">'
-        f'<div style="font-weight:600;color:{NAVY};margin-bottom:3px;">章鱼 AI</div>'
-        f'<div>内容由 {source_text} 自动合并，表格、列表与代码已按移动端重排</div>'
-        f'<div style="margin-top:3px;">仅供研究参考，不构成投资建议</div></div>'
+        f"仅供研究参考，不构成投资建议</div>"
     )
     return _document(cards)
 
@@ -700,8 +743,7 @@ def render_merge_title(topic: str, ref: datetime, source_count: int = 0) -> str:
     topic = (topic or "合并研报").strip()
     if len(topic) > 18:
         topic = topic[:18] + "…"
-    count = f" · {source_count}份" if source_count else ""
-    return f"章鱼AI {ref:%m-%d %H:%M} · 合并研报{count} · {topic}"
+    return f"章鱼AI {ref:%m-%d %H:%M} · 合并研报 · {topic}"
 
 
 def render_manual_title(topic: str, ref: datetime) -> str:

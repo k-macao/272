@@ -1,12 +1,9 @@
-"""PushPlus 微信推送。
-
-微信端对超长 HTML 的容错很差。渲染层会在顶层卡片之间插入不可见边界；
-超过建议长度时，本模块只沿这些边界拆成多条完整消息，绝不从标签中间硬截断。
-"""
+"""PushPlus 微信推送。"""
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 from .http import FetchError, Http
@@ -16,60 +13,117 @@ log = logging.getLogger(__name__)
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
 PUSHPLUS_URL_FALLBACK = "http://www.pushplus.plus/send"
 
-# 这不是 PushPlus API 的硬上限，而是微信内置浏览器保持流畅的建议单页长度。
-MAX_CONTENT = 40000
+MAX_CONTENT = 100000
 HTML_BLOCK_SEPARATOR = "<!--octopus:block-->"
 
+_TAG_NAME = re.compile(r"^<\s*/?\s*([a-zA-Z][\w:-]*)")
+_TOKEN = re.compile(r"<!--[\s\S]*?-->|<![^>]*>|<[^>]*>|[^<]+")
+_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 
-def split_html_pages(content: str, max_content: int = MAX_CONTENT) -> list[str]:
-    """沿渲染器提供的卡片边界拆分 HTML，并让每一页都有完整外层标签。
 
-    对没有边界的第三方 HTML 宁可完整发送，也不做破坏标签结构的盲目截断。
-    单张卡片本身超过建议长度时同样完整保留。
-    """
+def _trim_entity(text: str) -> str:
+    """避免截在 ``&amp;`` 这类 HTML 实体中间。"""
+    amp = text.rfind("&")
+    semi = text.rfind(";")
+    return text[:amp] if amp > semi else text
+
+
+def _truncate_valid_html(content: str, max_content: int) -> str:
+    """无卡片边界时保守截断，并补齐已经打开的 HTML 标签。"""
+    if len(content) <= max_content:
+        return content
+
+    out: list[str] = []
+    size = 0
+    stack: list[str] = []
+
+    def closing_size(names: list[str]) -> int:
+        return sum(len(name) + 3 for name in names)
+
+    for token in _TOKEN.findall(content):
+        if token.startswith("<!--"):
+            continue
+        match = _TAG_NAME.match(token)
+        if match:
+            name = match.group(1).lower()
+            if token.lstrip().startswith("</"):
+                new_stack = list(stack)
+                if name in new_stack:
+                    reverse_index = new_stack[::-1].index(name)
+                    del new_stack[len(new_stack) - reverse_index - 1 :]
+                if size + len(token) + closing_size(new_stack) > max_content:
+                    break
+                out.append(token)
+                size += len(token)
+                stack = new_stack
+                continue
+            is_void = name in _VOID_TAGS or token.rstrip().endswith("/>")
+            new_stack = stack if is_void else stack + [name]
+            if size + len(token) + closing_size(new_stack) > max_content:
+                break
+            out.append(token)
+            size += len(token)
+            stack = new_stack
+            continue
+
+        reserve = closing_size(stack)
+        available = max_content - size - reserve
+        if available <= 0:
+            break
+        if len(token) <= available:
+            out.append(token)
+            size += len(token)
+            continue
+        piece = _trim_entity(token[:available])
+        out.append(piece)
+        size += len(piece)
+        break
+
+    for name in reversed(stack):
+        closing = f"</{name}>"
+        if size + len(closing) > max_content:
+            break
+        out.append(closing)
+        size += len(closing)
+    return "".join(out)
+
+
+def limit_html_content(content: str, max_content: int = MAX_CONTENT) -> str:
+    """输出一条不超过上限的完整 HTML 正文。"""
     content = content or ""
     if HTML_BLOCK_SEPARATOR not in content:
-        return [content]
+        return _truncate_valid_html(content, max_content)
 
-    # `_document()` 产出的内容一定是一个外层 div。这里仍做防御检查，避免
-    # 输入形态变化时生成无效 HTML。
     opening_end = content.find(">")
     closing_start = content.rfind("</div>")
     if opening_end < 0 or closing_start <= opening_end:
-        return [content.replace(HTML_BLOCK_SEPARATOR, "")]
+        return _truncate_valid_html(
+            content.replace(HTML_BLOCK_SEPARATOR, ""), max_content
+        )
 
     opening = content[: opening_end + 1]
     closing = content[closing_start:]
     inner = content[opening_end + 1 : closing_start]
     blocks = [block for block in inner.split(HTML_BLOCK_SEPARATOR) if block]
-    if not blocks:
-        return [opening + closing]
-
-    budget = max(1, max_content - len(opening) - len(closing))
-    pages: list[str] = []
-    current: list[str] = []
-    current_size = 0
-
+    selected: list[str] = []
+    size = len(opening) + len(closing)
     for block in blocks:
-        block_size = len(block)
-        if current and current_size + block_size > budget:
-            pages.append(opening + "".join(current) + closing)
-            current = []
-            current_size = 0
-        if block_size > budget:
-            # 单卡过长时先落掉前面的卡，再把此卡作为一张完整的大页。
-            if current:
-                pages.append(opening + "".join(current) + closing)
-                current = []
-                current_size = 0
-            pages.append(opening + block + closing)
-            continue
-        current.append(block)
-        current_size += block_size
+        if size + len(block) > max_content:
+            break
+        selected.append(block)
+        size += len(block)
 
-    if current:
-        pages.append(opening + "".join(current) + closing)
-    return pages or [opening + closing]
+    if selected:
+        return opening + "".join(selected) + closing
+    return _truncate_valid_html(
+        opening + (blocks[0] if blocks else "") + closing,
+        max_content,
+    )
+
+
+def split_html_pages(content: str, max_content: int = MAX_CONTENT) -> list[str]:
+    """兼容旧调用；正文固定为一条。"""
+    return [limit_html_content(content, max_content)]
 
 
 class PushPlus:
@@ -84,82 +138,47 @@ class PushPlus:
             self.topics = [t for t in (topics or []) if t]
         self.channel = channel
 
-    # ------------------------------------------------------------------
     def send(self, title: str, content: str, *, dry_run: bool = False) -> bool:
-        pages = split_html_pages(content)
+        content = limit_html_content(content)
         if dry_run:
-            log.info(
-                "[dry-run] 跳过推送：%s（正文 %d 字符，%d 页）",
-                title,
-                len(content),
-                len(pages),
-            )
+            log.info("[dry-run] 跳过推送：%s（正文 %d 字符）", title, len(content))
             return True
 
-        if len(pages) > 1:
-            log.info("正文 %d 字符，已按完整卡片整理为 %d 条推送", len(content), len(pages))
-        elif len(pages[0]) > MAX_CONTENT:
-            log.warning(
-                "正文含一张 %d 字符的超长卡片；为避免破坏 HTML，保持完整发送",
-                len(pages[0]),
-            )
-
-        topics_to_send = self.topics or [None]  # None 表示个人推送
-        complete_topics = 0
-
+        topics_to_send = self.topics or [None]
+        success_count = 0
         for topic in topics_to_send:
-            topic_ok = True
-            for page_index, page in enumerate(pages, 1):
-                page_title = (
-                    f"{title}（{page_index}/{len(pages)}）" if len(pages) > 1 else title
-                )
-                payload = {
-                    "token": self.token,
-                    "title": page_title,
-                    "content": page,
-                    "template": "html",
-                    "channel": self.channel,
-                }
-                if topic:
-                    payload["topic"] = topic
+            payload = {
+                "token": self.token,
+                "title": title,
+                "content": content,
+                "template": "html",
+                "channel": self.channel,
+            }
+            if topic:
+                payload["topic"] = topic
 
-                sent_ok = False
-                last_error = ""
-                for url in (PUSHPLUS_URL, PUSHPLUS_URL_FALLBACK):
-                    try:
-                        data = self.http.post_json(url, payload)
-                    except FetchError as exc:
-                        last_error = str(exc)
-                        time.sleep(1.0)
-                        continue
+            sent_ok = False
+            last_error = ""
+            for url in (PUSHPLUS_URL, PUSHPLUS_URL_FALLBACK):
+                try:
+                    data = self.http.post_json(url, payload)
+                except FetchError as exc:
+                    last_error = str(exc)
+                    time.sleep(1.0)
+                    continue
 
-                    code = (data or {}).get("code")
-                    if code == 200:
-                        log.info(
-                            "推送成功：%s (topic=%s)",
-                            page_title,
-                            topic or "self",
-                        )
-                        sent_ok = True
-                        break
-                    last_error = f"code={code} msg={(data or {}).get('msg')}"
-                    log.error("PushPlus 返回异常：%s", last_error)
-                    # 业务错误（token 失效等）重试备用域名无意义。
-                    if code in (400, 401, 403, 500):
-                        break
-
-                if not sent_ok:
-                    log.error(
-                        "推送失败 (topic=%s, page=%d/%d)：%s",
-                        topic or "self",
-                        page_index,
-                        len(pages),
-                        last_error,
-                    )
-                    topic_ok = False
+                code = (data or {}).get("code")
+                if code == 200:
+                    log.info("推送成功：%s (topic=%s)", title, topic or "self")
+                    sent_ok = True
+                    success_count += 1
+                    break
+                last_error = f"code={code} msg={(data or {}).get('msg')}"
+                log.error("PushPlus 返回异常：%s", last_error)
+                if code in (400, 401, 403, 500):
                     break
 
-            if topic_ok:
-                complete_topics += 1
+            if not sent_ok:
+                log.error("推送失败 (topic=%s)：%s", topic or "self", last_error)
 
-        return complete_topics > 0
+        return success_count > 0
