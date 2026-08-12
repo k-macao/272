@@ -1,13 +1,16 @@
 """A 股行情数据层：主题 -> 板块 -> 成分股 -> 日线序列。
 
-数据全部来自东方财富公开行情接口（与项目里 ifind/cninfo 等源同一套口径）：
-  - 概念/行业板块列表   push2 clist（fs=m:90 t:3 / m:90 t:2）
-  - 板块成分股           push2 clist（fs=b:BKxxxx）
-  - 个股/指数日线        push2his kline（klt=101 日线，fqt=1 前复权）
+数据源可切换（config `factor_market_source`）：
+  - eastmoney：东方财富公开行情接口（国内机器，与项目里 ifind/cninfo 等
+    源同一套口径）—— 板块/主力资金/换手率最全
+  - yahoo：Yahoo Finance（国外可直连的免费源，免注册无 Key）—— 板块用
+    内置概念词典，涨跌幅/成交额由最新行情推算并如实标注
+  - auto：东财优先，任一环节失败自动降级到 Yahoo
 
-时间校验沿用项目的核心原则：K 线的日期由接口给出（YYYY-MM-DD），
-解析不出来的整根丢弃；最新一根 K 线的日期会带进报告，读者能自己判断
-数据新鲜度。绝不用"抓取时刻"冒充"行情时刻"。
+具体抓取逻辑在 providers.py；本模块只负责「按配置选源 + 兜底降级 +
+标的组装」。时间校验沿用项目的核心原则：K 线的日期由接口给出
+（YYYY-MM-DD），解析不出来的整根丢弃；最新一根 K 线的日期会带进报告，
+读者能自己判断数据新鲜度。绝不用"抓取时刻"冒充"行情时刻"。
 """
 
 from __future__ import annotations
@@ -21,14 +24,6 @@ from ..http import FetchError, Http
 from ..timeutil import CN_TZ, now, parse
 
 log = logging.getLogger(__name__)
-
-CLIST_API = "https://push2.eastmoney.com/api/qt/clist/get"
-KLINE_API = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-UT = "b2884a393a59ad64002292a3e90d46a5"
-
-#: 板块类型：t:3 概念板块，t:2 行业板块
-CONCEPT_FS = "m:90 t:3"
-INDUSTRY_FS = "m:90 t:2"
 
 #: 大盘基准指数（secid: 市场.代码，1=沪 0=深）
 BENCHMARKS: tuple[tuple[str, str, str], ...] = (
@@ -129,13 +124,14 @@ class Instrument:
 class Board:
     """一个概念/行业板块。"""
 
-    code: str          # BK0475
+    code: str          # 东财 BK0475；词典源下为板块名
     name: str
     change: float = 0.0
-    main_inflow: float = 0.0   # 主力净流入（元）
+    main_inflow: float = 0.0   # 主力净流入（元）；Yahoo 源无此数据
     leader: str = ""
     kind: str = "概念"
     matched_by: str = ""       # 命中主题的关键词，用于报告里说明匹配依据
+    change_derived: bool = False  # 涨跌幅是否由成分股行情推算（Yahoo 源）
 
 
 @dataclass
@@ -180,54 +176,60 @@ def tokenize(topic: str) -> list[str]:
 
 
 class MarketData:
-    """东财行情抓取。所有方法失败都抛 FetchError，由 pipeline 决定降级。"""
+    """多源行情门面：按配置选 Provider，逐个尝试、失败降级。
 
-    def __init__(self, http: Http, *, config: dict | None = None) -> None:
+    - `source="eastmoney"`：只用东财（默认，兼容旧行为）
+    - `source="yahoo"`：只用 Yahoo Finance（国外免费源）
+    - `source="auto"`：东财优先，任一环节失败自动切 Yahoo
+
+    所有方法失败都抛 FetchError，由 pipeline 决定降级；每次成功调用会
+    记录实际生效的 Provider，供报告如实标注数据来源。
+    """
+
+    def __init__(self, http: Http, *, source: str = "eastmoney", config: dict | None = None) -> None:
+        from .providers import EastmoneyProvider, YahooProvider  # 延迟导入，避免循环依赖
+
         self.http = http
         self.config = config or {}
+        self.source = (source or "eastmoney").strip().lower()
+        if self.source not in ("auto", "eastmoney", "yahoo"):
+            raise ValueError(
+                f"未知的行情数据源：{self.source!r}（可选 auto / eastmoney / yahoo）"
+            )
+        self._providers: list = []
+        if self.source in ("auto", "eastmoney"):
+            self._providers.append(EastmoneyProvider(http))
+        if self.source in ("auto", "yahoo"):
+            self._providers.append(YahooProvider(http))
+        self.used: list[str] = []      # 本轮实际用过的 Provider 名（保序去重）
+
+    #: Provider 内部名 -> 报告展示名
+    DISPLAY = {"eastmoney": "东方财富行情接口", "yahoo": "Yahoo Finance（国外免费源）"}
+
+    def source_note(self) -> str:
+        """实际生效的行情数据源说明（报告里如实标注）。"""
+        return "、".join(self.DISPLAY.get(n, n) for n in self.used) or "未获取到行情"
+
+    # ------------------------------------------------------------------
+    def _try(self, method: str, *args, **kwargs):
+        """按顺序尝试各 Provider，全部失败时抛汇总的 FetchError。"""
+        errors: list[str] = []
+        for provider in self._providers:
+            try:
+                result = getattr(provider, method)(*args, **kwargs)
+            except FetchError as exc:
+                errors.append(f"{provider.name}: {exc}")
+                log.info("行情源 %s 的 %s 失败：%s", provider.name, method, exc)
+                continue
+            if provider.name not in self.used:
+                self.used.append(provider.name)
+            return result
+        raise FetchError("；".join(errors))
 
     # ------------------------------------------------------------------
     def boards(self, kind: str = "concept") -> list[Board]:
         """全部概念（或行业）板块列表。"""
-        fs = CONCEPT_FS if kind == "concept" else INDUSTRY_FS
-        data = self.http.json(
-            CLIST_API,
-            params={
-                "pn": 1,
-                "pz": 500,
-                "po": 1,
-                "np": 1,
-                "fltt": 2,
-                "invt": 2,
-                "fid": "f3",
-                "fs": fs,
-                "fields": "f2,f3,f12,f14,f62,f128,f136",
-                "ut": UT,
-            },
-            headers={"Referer": "https://quote.eastmoney.com/center/boardlist.html"},
-        )
-        rows = ((data or {}).get("data") or {}).get("diff") or []
-        if isinstance(rows, dict):  # 东财有时返回 {"0": {...}} 形式
-            rows = list(rows.values())
-        out: list[Board] = []
-        for row in rows:
-            code = str(row.get("f12") or "")
-            name = str(row.get("f14") or "")
-            if not code or not name:
-                continue
-            out.append(
-                Board(
-                    code=code,
-                    name=name,
-                    change=_num(row.get("f3")) or 0.0,
-                    main_inflow=_num(row.get("f62")) or 0.0,
-                    leader=str(row.get("f128") or ""),
-                    kind="概念" if kind == "concept" else "行业",
-                )
-            )
-        if not out:
-            raise FetchError(f"东财{kind}板块列表为空")
-        return out
+        return self._try("boards", kind)
 
     # ------------------------------------------------------------------
     def match_board(self, topic: str) -> tuple[Board | None, list[Board]]:
@@ -271,104 +273,24 @@ class MarketData:
         return candidates[0], candidates
 
     # ------------------------------------------------------------------
-    def board_members(self, board_code: str, top: int = 8) -> list[tuple[str, str, dict]]:
-        """板块成分股，按成交额降序取前 N。返回 [(secid, 名称, 行情字段)]。"""
-        data = self.http.json(
-            CLIST_API,
-            params={
-                "pn": 1,
-                "pz": max(top * 3, 30),
-                "po": 1,
-                "np": 1,
-                "fltt": 2,
-                "invt": 2,
-                "fid": "f6",  # 按成交额排序
-                "fs": f"b:{board_code}",
-                "fields": "f2,f3,f6,f8,f12,f13,f14",
-                "ut": UT,
-            },
-            headers={"Referer": "https://quote.eastmoney.com/center/boardlist.html"},
-        )
-        rows = ((data or {}).get("data") or {}).get("diff") or []
-        if isinstance(rows, dict):
-            rows = list(rows.values())
-        out: list[tuple[str, str, dict]] = []
-        for row in rows:
-            code = str(row.get("f12") or "")
-            name = str(row.get("f14") or "")
-            market = row.get("f13")
-            if not code or not name or market is None:
-                continue
-            if _is_risky_name(name):
-                continue  # ST/退市风险股不纳入分析样本
-            out.append((f"{market}.{code}", name, row))
-            if len(out) >= top:
-                break
-        return out
+    def board_members(self, board: Board | str, top: int = 8) -> list[tuple[str, str, dict]]:
+        """板块成分股，按成交额降序取前 N。返回 [(secid, 名称, 行情字段)]。
+
+        兼容两种传参：Board 对象，或板块代码字符串（东财 BKxxxx）。
+        """
+        if isinstance(board, str):
+            board = Board(code=board, name=board)
+        return self._try("board_members", board, top)
 
     # ------------------------------------------------------------------
     def top_amount_stocks(self, top: int = 8) -> list[tuple[str, str, dict]]:
         """全市场成交额前 N（板块匹配失败时的降级口径）。"""
-        data = self.http.json(
-            CLIST_API,
-            params={
-                "pn": 1,
-                "pz": max(top * 3, 30),
-                "po": 1,
-                "np": 1,
-                "fltt": 2,
-                "invt": 2,
-                "fid": "f6",
-                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-                "fields": "f2,f3,f6,f8,f12,f13,f14",
-                "ut": UT,
-            },
-            headers={"Referer": "https://quote.eastmoney.com/center/gridlist.html"},
-        )
-        rows = ((data or {}).get("data") or {}).get("diff") or []
-        if isinstance(rows, dict):
-            rows = list(rows.values())
-        out: list[tuple[str, str, dict]] = []
-        for row in rows:
-            code = str(row.get("f12") or "")
-            name = str(row.get("f14") or "")
-            market = row.get("f13")
-            if not code or not name or market is None or _is_risky_name(name):
-                continue
-            out.append((f"{market}.{code}", name, row))
-            if len(out) >= top:
-                break
-        if not out:
-            raise FetchError("全市场成交额榜为空")
-        return out
+        return self._try("top_amount_stocks", top)
 
     # ------------------------------------------------------------------
     def kline(self, secid: str, *, limit: int = 250) -> list[Bar]:
         """日线序列（前复权），最早在前、最新在后。"""
-        data = self.http.json(
-            KLINE_API,
-            params={
-                "secid": secid,
-                "fields1": "f1,f2,f3,f4,f5,f6",
-                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-                "klt": 101,   # 日线
-                "fqt": 1,     # 前复权
-                "end": "20500101",
-                "lmt": limit,
-                "ut": UT,
-            },
-            headers={"Referer": "https://quote.eastmoney.com/"},
-        )
-        payload = (data or {}).get("data") or {}
-        lines = payload.get("klines") or []
-        bars: list[Bar] = []
-        for line in lines:
-            bar = _parse_kline(str(line))
-            if bar is not None:      # 时间/数值解析不出来的整根丢弃，绝不臆造
-                bars.append(bar)
-        if not bars:
-            raise FetchError(f"{secid} 日线为空")
-        return bars
+        return self._try("kline", secid, limit=limit)
 
     # ------------------------------------------------------------------
     def load_instrument(

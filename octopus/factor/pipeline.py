@@ -91,6 +91,7 @@ class ThemePipeline:
         stock_top: int = 6,
         kline_limit: int = DEFAULT_KLINE_LIMIT,
         supervision_days: int = 30,
+        market_source: str = "eastmoney",
     ) -> None:
         self.http = http
         self.base_dir = base_dir or Path.cwd()
@@ -98,7 +99,7 @@ class ThemePipeline:
         self.deepseek_model = (deepseek_model or "deepseek-v4-flash").strip()
         self.stock_top = max(1, stock_top)
         self.kline_limit = max(MIN_BARS, kline_limit)
-        self.market = MarketData(http)
+        self.market = MarketData(http, source=market_source)
         self.repo = QlibFactorRepo(
             http, cache_dir=self.base_dir / "state" / "factors", token=github_token
         )
@@ -126,6 +127,8 @@ class ThemePipeline:
         if analysis.model.degraded:
             analysis.notes.append(f"因子模型：{analysis.model.degraded}")
         analysis.notes.extend(snapshot.errors)
+        if self.market.used:
+            analysis.notes.append(f"行情数据源：{self.market.source_note()}")
 
         # --- 2. 计算因子 -------------------------------------------------
         factors = self._select_factors(analysis.model)
@@ -210,22 +213,26 @@ class ThemePipeline:
             board, candidates = self.market.match_board(topic)
             snapshot.board = board
             snapshot.boards_considered = candidates
+            # Yahoo 源没有真实成交额，只有「最新价 × 成交量」的推算值，如实标注
+            derived_note = "（成交额按最新价×成交量推算）" if "yahoo" in self.market.used else ""
             if board:
-                members = self.market.board_members(board.code, top=self.stock_top)
+                members = self.market.board_members(board, top=self.stock_top)
                 snapshot.universe_note = (
                     f"主题命中「{board.name}」{board.kind}板块"
                     f"（关键词：{board.matched_by}），取板块内成交额前 {len(members)} 只个股"
+                    f"{derived_note}"
                 )
         except FetchError as exc:
             snapshot.errors.append(f"板块匹配失败：{exc}")
             log.warning("板块匹配失败：%s", exc)
 
         if not members:
+            derived_note = "（成交额按最新价×成交量推算）" if "yahoo" in self.market.used else ""
             try:
                 members = self.market.top_amount_stocks(top=self.stock_top)
                 snapshot.universe_note = (
                     f"未匹配到对应板块，降级为全市场成交额前 {len(members)} 只个股"
-                    "（分析口径已相应放宽）"
+                    f"（分析口径已相应放宽）{derived_note}"
                 )
             except FetchError as exc:
                 snapshot.errors.append(f"个股列表获取失败：{exc}")
@@ -322,9 +329,14 @@ def build_facts(analysis: ThemeAnalysis) -> str:
     lines.append("## 一、分析标的")
     if a.market.board:
         b = a.market.board
+        derived = "（推算）" if b.change_derived else ""
+        inflow = (
+            f"，主力净流入 {b.main_inflow / 1e8:+.2f} 亿元"
+            if b.main_inflow else "，主力净流入数据缺失"
+        )
         lines.append(
             f"命中板块：{b.name}（{b.kind}，代码 {b.code}），"
-            f"板块涨跌幅 {b.change:+.2f}%，主力净流入 {b.main_inflow / 1e8:+.2f} 亿元"
+            f"板块涨跌幅 {b.change:+.2f}%{derived}{inflow}"
             + (f"，领涨股 {b.leader}" if b.leader else "")
         )
     if a.market.boards_considered and len(a.market.boards_considered) > 1:
@@ -407,7 +419,9 @@ def rule_based_report(analysis: ThemeAnalysis) -> str:
     if board:
         out.append(
             f"{board.kind}主题 · {board.name}（{board.code}）"
-            f"｜板块最新涨跌 {board.change:+.2f}%｜关键词：{board.matched_by}"
+            f"｜板块最新涨跌 {board.change:+.2f}%"
+            + ("（推算）" if board.change_derived else "")
+            + f"｜关键词：{board.matched_by}"
         )
     else:
         out.append(f"通用市场主题 · {a.topic or '未指定'}｜未匹配到具体板块，按全市场口径分析")

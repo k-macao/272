@@ -41,6 +41,15 @@ on:
         options:
           - "false"
           - "true"
+      market_source:
+        description: "行情数据源（国外 runner 建议 yahoo，免费免 Key）"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - "auto"
+          - "yahoo"
+          - "eastmoney"
 
 permissions:
   contents: read
@@ -79,6 +88,9 @@ jobs:
           ARGS=(--theme "$THEME"
                 --stock-top "${{ github.event.inputs.stock_top }}"
                 --supervision-days "${{ github.event.inputs.supervision_days }}")
+          if [ "${{ github.event.inputs.market_source }}" != "auto" ]; then
+            ARGS+=(--market-source "${{ github.event.inputs.market_source }}")
+          fi
           if [ "${{ github.event.inputs.use_ai }}" = "false" ]; then
             ARGS+=(--no-ai)
           fi

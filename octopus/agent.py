@@ -265,6 +265,7 @@ class Agent:
             stock_top=self.config.factor_stock_top,
             kline_limit=self.config.factor_kline_limit,
             supervision_days=self.config.supervision_days,
+            market_source=self.config.factor_market_source,
         )
 
     def analyze_theme(
