@@ -52,9 +52,19 @@ git push
 
 **方式一 · GitHub Actions 独立 workflow（云端页面触发）**
 
-1. 仓库 **Actions** → **章鱼AI 手动主题推送 → Run workflow**；
-2. 表单里填 `topic`（主题标题，可选）和 `content`（分析内容，支持多行粘贴）；
-3. `dry_run` 选 `true` 可以先出预览（Artifacts 下载 `preview.html`），确认后改回 `false` 正式推送。
+先使用可直接复制的过渡文件：
+
+```
+deploy/github-workflows/pushplus_workflow.yml.txt
+```
+
+1. 打开上述过渡文件并复制**全部内容**；
+2. 仓库 → **Add file → Create new file**；
+3. 文件名填 `.github/workflows/pushplus_workflow.yml`，粘贴并提交；
+4. 确认新入口可用后删除旧的 `.github/workflows/m.yml`，避免出现两个重复入口；
+5. 仓库 **Actions** → **章鱼AI 手动主题推送 → Run workflow**；
+6. 表单里填 `topic`（主题标题，可选）和 `content`（分析内容，支持多行粘贴）；
+7. `dry_run` 选 `true` 可以先出预览（Artifacts 下载 `preview.html`），确认后改回 `false` 正式推送。
 
 > 如在 Secrets 配置了 `DEEPSEEK_API_KEY`，会自动调用 DeepSeek 大模型提炼分类和摘要，再组合推送到微信。
 > （旧的 `ZHIPU_API_KEY` 仍会被回落读取，兼容未改名的历史 Secret。）
