@@ -1,0 +1,97 @@
+# ============================================================================
+# 模版：把本文件全部内容粘贴到 .github/workflows/scrape.yml（覆盖原有内容）
+#
+# GitHub 网页操作：仓库 → .github/workflows/scrape.yml → ✏️ Edit → 全选删除
+# → 粘贴下面 # ===== 分隔线之后的全部内容 → Commit changes
+#
+# 与线上旧版相比仅有 2 处变化：
+#   1. cron 注释补充「北京时间 23:00–07:00 免打扰」说明（纯注释，行为不变）
+#   2. window_minutes 默认值 “300” → "180"：旧版是中文弯引号，YAML 会把
+#      弯引号当成值的一部分，手动触发时 int("“300”") 解析失败、静默回落
+#      到 180；这里直接改回正确的半角引号。想保留 300 就改成 "300" 即可。
+# 免打扰本身由程序代码实现（读 config.yml 的 quiet_start/quiet_end），
+# workflow 无需任何功能改动；本模版只是顺带修注释和引号。
+# ============================================================================
+
+name: 章鱼AI 抓取
+
+on:
+  schedule:
+    # 每 30 分钟一次。GitHub Actions 用 UTC，这里覆盖全天；
+    # 抓取程序内部按 A 股交易时段自行判断哪些源该产出内容，
+    # 并按北京时间 23:00–07:00 免打扰时段自行休眠（秒级退出，成功态）。
+    - cron: "0,30 * * * *"
+  workflow_dispatch:
+    inputs:
+      window_minutes:
+        description: "时间窗口（分钟）"
+        required: false
+        default: "180"
+      dry_run:
+        description: "只抓不推（true/false）"
+        required: false
+        default: "false"
+
+# 同一时间只允许一个实例，避免上一轮没跑完就叠加
+concurrency:
+  group: octopus-scrape
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 恢复去重状态
+        uses: actions/cache/restore@v5
+        with:
+          path: state
+          key: octopus-state-${{ github.run_id }}
+          restore-keys: |
+            octopus-state-
+
+      - name: 执行抓取与推送
+        env:
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          PUSHPLUS_TOPIC: ${{ secrets.PUSHPLUS_TOPIC }}
+          DATAYES_TOKEN: ${{ secrets.DATAYES_TOKEN }}
+          OCTOPUS_WINDOW_MINUTES: ${{ github.event.inputs.window_minutes || '180' }}
+          TZ: Asia/Shanghai
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python main.py --dry-run
+          else
+            python main.py
+          fi
+
+      - name: 保存去重状态
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: state
+          key: octopus-state-${{ github.run_id }}
+
+      - name: 上传预览（仅 dry-run）
+        if: always() && github.event.inputs.dry_run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: preview
+          path: preview.html
+          if-no-files-found: ignore
+          retention-days: 3
