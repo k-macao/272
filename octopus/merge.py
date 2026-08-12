@@ -151,7 +151,7 @@ def merge_markdowns(
         lines.append("## 合并说明与来源追溯")
         lines.append("")
         lines.append("| 序号 | 文件名 | 标题 | 字符数 | 内容指纹 |")
-        lines.append("|---:|---|---|---:|---|---|")
+        lines.append("|---:|---|---|---:|---|")
         for i, src in enumerate(deduped, 1):
             lines.append(f"| {i} | `{src.filename}` | {src.title[:40]} | {src.size} | `{src.sha}` |")
         lines.append("")
@@ -177,18 +177,13 @@ def merge_markdowns(
         lines.append("")
         lines.append(f"> **文件名**：`{src.filename}`  |  **指纹**：`{src.sha}`  |  **字符**：{src.size}")
         lines.append("")
-        # 如果不是第一个文件，适当降一级标题避免 H1 冲突：将内部的 "# " 替换为 "### "
-        content = src.content
-        if idx > 1:
-            # 把原文件的顶级 # 标题降级为 ###，避免破坏合并结构
-            adjusted = []
-            for line in content.splitlines():
-                if line.startswith("# "):
-                    adjusted.append("### " + line[2:])
-                else:
-                    adjusted.append(line)
-            content = "\n".join(adjusted)
-        lines.append(content)
+        # 外层已经显示“原始报告 N：标题”，去掉源文件开头重复的 H1。
+        # 其余章节标题原样保留，渲染器会据此拆成适合手机阅读的章节卡片。
+        content_lines = src.content.splitlines()
+        first_content = next((i for i, line in enumerate(content_lines) if line.strip()), None)
+        if first_content is not None and content_lines[first_content].lstrip().startswith("# "):
+            content_lines.pop(first_content)
+        lines.append("\n".join(content_lines).strip())
         lines.append("")
         lines.append("---")
         lines.append("")

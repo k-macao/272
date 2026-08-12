@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import html
 import re
+from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from .models import Item, SourceResult, TimeQuality
 from .timeutil import humanize, stamp
@@ -30,6 +32,21 @@ TIME_BADGE = {
     TimeQuality.DATE: ("当日", "#6b7b93"),
 }
 
+# 每张顶层卡片之间插入一个不可见标记。PushPlus 正文过长时，通知层只在
+# 这些边界分页，绝不再从一段 HTML 的中间硬截断（硬截断会让微信正文样式错乱）。
+HTML_BLOCK_SEPARATOR = "<!--octopus:block-->"
+
+
+def _document(cards: list[str]) -> str:
+    """把顶层卡片拼成完整正文，并保留安全分页边界。"""
+    outer = (
+        f'<div style="background:{BG};padding:12px 10px;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
+        f'\'Helvetica Neue\',Helvetica,Arial,sans-serif;color:{NAVY};'
+        f'line-height:1.65;font-size:15px;word-break:break-word;">'
+    )
+    return outer + HTML_BLOCK_SEPARATOR.join(cards) + "</div>"
+
 
 def render_html(
     groups: list[tuple[SourceResult, list[Item]]],
@@ -41,25 +58,17 @@ def render_html(
     degraded: list[SourceResult],
 ) -> str:
     """整合所有源的条目，输出一封完整的推送正文。"""
-    parts: list[str] = []
-    parts.append(
-        f'<div style="background:{BG};padding:14px 12px;'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
-        f'\'Helvetica Neue\',Helvetica,Arial,sans-serif;color:{NAVY};'
-        f'line-height:1.6;font-size:15px;">'
-    )
-    parts.append(_header(total, window_minutes, ref))
+    cards: list[str] = [_header(total, window_minutes, ref)]
 
     if total == 0:
-        parts.append(_empty_card(window_minutes))
+        cards.append(_empty_card(window_minutes))
     else:
         for result, items in groups:
             if items:
-                parts.append(_section(result, items, ref))
+                cards.append(_section(result, items, ref))
 
-    parts.append(_footer(ref, failures, degraded, window_minutes))
-    parts.append("</div>")
-    return "".join(parts)
+    cards.append(_footer(ref, failures, degraded, window_minutes))
+    return _document(cards)
 
 
 # ---------------------------------------------------------------------------
@@ -228,27 +237,30 @@ def render_manual(
     ref: datetime,
     ai_summary: str = "",
     ai_model: str = "DeepSeek-V4",
+    markdown: bool | None = None,
 ) -> str:
-    """把人工录入的 AI 分析主题/内容（可选搭配 DeepSeek 大模型提炼）渲染成推送正文。"""
+    """渲染人工录入内容。
+
+    ``markdown=None`` 时自动识别标题、列表、表格和代码块。普通多行文本仍按
+    原样换行展示，避免把聊天式输入误判成 Markdown。
+    """
     topic = (topic or "").strip()
     content = (content or "").strip()
     ai_summary = (ai_summary or "").strip()
-    parts: list[str] = []
-    parts.append(
-        f'<div style="background:{BG};padding:14px 12px;'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
-        f'\'Helvetica Neue\',Helvetica,Arial,sans-serif;color:{NAVY};'
-        f'line-height:1.6;font-size:15px;">'
-    )
-    parts.append(_manual_header(ref, ai_model=ai_model if ai_summary else ""))
+    if markdown is None:
+        markdown = _looks_like_markdown(content)
+
+    cards: list[str] = [_manual_header(ref, ai_model=ai_model if ai_summary else "")]
     if ai_summary:
-        parts.append(_manual_ai_card(ai_summary, ai_model))
-        parts.append(_manual_card(topic or "原始录入内容", content))
+        cards.append(_manual_ai_card(ai_summary, ai_model))
+
+    body_title = topic or ("原始录入内容" if ai_summary else "AI 分析内容")
+    if markdown:
+        cards.extend(_markdown_cards(body_title, content))
     else:
-        parts.append(_manual_card(topic, content))
-    parts.append(_manual_footer(ref))
-    parts.append("</div>")
-    return "".join(parts)
+        cards.append(_manual_card(body_title, content))
+    cards.append(_manual_footer(ref))
+    return _document(cards)
 
 
 def _manual_header(ref: datetime, ai_model: str = "") -> str:
@@ -271,7 +283,7 @@ def _manual_header(ref: datetime, ai_model: str = "") -> str:
 
 def _manual_ai_card(ai_summary: str, ai_model: str) -> str:
     title = f"✨ DeepSeek AI 智能提炼 · 分类与摘要 ({html.escape(ai_model)})"
-    body = html.escape(ai_summary).replace("\n", "<br>")
+    body = _rich_text(ai_summary)
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-left:4px solid #1b5e20;border-radius:8px;padding:12px 14px;margin-bottom:12px;">'
@@ -306,6 +318,390 @@ def _manual_footer(ref: datetime) -> str:
         f'<div style="margin-top:3px;">仅供参考，不构成投资建议</div>'
         f"</div>"
     )
+
+
+# ---------------------------------------------------------------------------
+# 合并研报与轻量 Markdown 渲染
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _MarkdownBlock:
+    kind: str
+    rendered: str
+    text: str = ""
+    level: int = 0
+
+
+_MARKDOWN_HINT = re.compile(
+    r"(?m)^\s*(?:#{1,6}\s+|```|~~~|>\s*|[-+*]\s+|\d+[.)]\s+|(?:---+|___+|\*\*\*+)\s*$)"
+)
+_TABLE_DIVIDER = re.compile(
+    r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
+)
+_LIST_ITEM = re.compile(r"^(\s*)([-+*]|\d+[.)])\s+(.+)$")
+_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_FENCE = re.compile(r"^\s*(```|~~~)\s*([\w.+-]*)\s*$")
+
+
+def _looks_like_markdown(text: str) -> bool:
+    """保守识别 Markdown；只有结构标记明确时才启用富文本渲染。"""
+    if not text:
+        return False
+    if _MARKDOWN_HINT.search(text):
+        return True
+    lines = text.splitlines()
+    return any(
+        i + 1 < len(lines) and "|" in line and _TABLE_DIVIDER.match(lines[i + 1])
+        for i, line in enumerate(lines)
+    )
+
+
+def _inline_markdown(value: str) -> str:
+    """安全渲染少量行内 Markdown（链接、代码、粗体、删除线）。"""
+    escaped = html.escape(value.strip())
+    tokens: dict[str, str] = {}
+
+    def protect(fragment: str) -> str:
+        key = f"\ue000{len(tokens)}\ue001"
+        tokens[key] = fragment
+        return key
+
+    escaped = re.sub(
+        r"`([^`\n]+)`",
+        lambda m: protect(
+            f'<code style="background:#e3e8ef;color:{NAVY_DEEP};border-radius:3px;'
+            f'padding:1px 4px;font-family:Menlo,Consolas,monospace;font-size:12px;">'
+            f"{m.group(1)}</code>"
+        ),
+        escaped,
+    )
+
+    def link(match: re.Match[str]) -> str:
+        label, raw_url = match.group(1), html.unescape(match.group(2)).strip()
+        parsed = urlsplit(raw_url)
+        if parsed.scheme not in ("http", "https"):
+            # 微信中的文内锚点并不可靠；保留可读标签，不制造无效链接。
+            return label
+        url = html.escape(raw_url, quote=True)
+        return protect(
+            f'<a href="{url}" style="color:{ACCENT};text-decoration:none;">{label}</a>'
+        )
+
+    escaped = re.sub(r"\[([^\]]+)]\(([^)\s]+)(?:\s+[^)]*)?\)", link, escaped)
+    escaped = re.sub(
+        r"\*\*(.+?)\*\*|__(.+?)__",
+        lambda m: f'<strong style="color:{NAVY_DEEP};">{m.group(1) or m.group(2)}</strong>',
+        escaped,
+    )
+    escaped = re.sub(
+        r"~~(.+?)~~",
+        r'<span style="text-decoration:line-through;opacity:.7;">\1</span>',
+        escaped,
+    )
+    for key, fragment in tokens.items():
+        escaped = escaped.replace(key, fragment)
+    return escaped
+
+
+def _split_table_row(line: str) -> list[str]:
+    """拆 Markdown 表格行，兼容反斜线转义的竖线。"""
+    value = line.strip()
+    if value.startswith("|"):
+        value = value[1:]
+    if value.endswith("|") and not value.endswith(r"\|"):
+        value = value[:-1]
+    sentinel = "\ue100"
+    value = value.replace(r"\|", sentinel)
+    return [cell.strip().replace(sentinel, "|") for cell in value.split("|")]
+
+
+def _render_table(rows: list[list[str]]) -> str:
+    width = max((len(r) for r in rows), default=1)
+    normalized = [r + [""] * (width - len(r)) for r in rows]
+    min_width = min(760, max(300, width * 125))
+    head = "".join(
+        f'<th style="background:#dde5f0;color:{NAVY_DEEP};font-weight:700;'
+        f'padding:6px;border:1px solid {BORDER};text-align:left;vertical-align:top;">'
+        f"{_inline_markdown(cell)}</th>"
+        for cell in normalized[0]
+    )
+    body_rows: list[str] = []
+    for row_index, row in enumerate(normalized[1:]):
+        bg = CARD_BG if row_index % 2 == 0 else "#eef1f5"
+        cells = "".join(
+            f'<td style="background:{bg};padding:6px;border:1px solid {BORDER};'
+            f'vertical-align:top;">{_inline_markdown(cell)}</td>'
+            for cell in row
+        )
+        body_rows.append(f"<tr>{cells}</tr>")
+    return (
+        f'<div style="overflow-x:auto;margin:9px 0;">'
+        f'<table style="width:100%;min-width:{min_width}px;border-collapse:collapse;'
+        f'font-size:12px;line-height:1.5;"><thead><tr>{head}</tr></thead>'
+        f"<tbody>{''.join(body_rows)}</tbody></table></div>"
+    )
+
+
+def _markdown_blocks(text: str) -> list[_MarkdownBlock]:
+    """把常见研报 Markdown 转成微信兼容的内联样式块。"""
+    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    blocks: list[_MarkdownBlock] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped:
+            i += 1
+            continue
+
+        fence = _FENCE.match(line)
+        if fence:
+            marker, language = fence.groups()
+            i += 1
+            code: list[str] = []
+            while i < len(lines) and not re.match(rf"^\s*{re.escape(marker)}\s*$", lines[i]):
+                code.append(lines[i])
+                i += 1
+            if i < len(lines):
+                i += 1
+            label = (
+                f'<div style="font-size:10px;color:#9fb0c6;margin-bottom:5px;">'
+                f"{html.escape(language)}</div>"
+                if language
+                else ""
+            )
+            rendered = (
+                f'<div style="margin:9px 0;background:{NAVY_DEEP};border-radius:6px;'
+                f'padding:9px 10px;color:#eef3fa;">{label}'
+                f'<pre style="margin:0;white-space:pre-wrap;word-break:break-word;'
+                f'font:11px/1.55 Menlo,Consolas,monospace;">'
+                f"{html.escape(chr(10).join(code))}</pre></div>"
+            )
+            blocks.append(_MarkdownBlock("code", rendered))
+            continue
+
+        heading = _HEADING.match(stripped)
+        if heading:
+            level = len(heading.group(1))
+            title = re.sub(r"\s+#+$", "", heading.group(2)).strip()
+            if level <= 2:
+                blocks.append(_MarkdownBlock("heading", "", title, level))
+            else:
+                size = 15 if level == 3 else 14
+                rendered = (
+                    f'<div style="font-size:{size}px;font-weight:700;color:{NAVY_DEEP};'
+                    f'margin:14px 0 6px;padding-left:8px;border-left:3px solid {ACCENT};">'
+                    f"{_inline_markdown(title)}</div>"
+                )
+                blocks.append(_MarkdownBlock("subheading", rendered, title, level))
+            i += 1
+            continue
+
+        if i + 1 < len(lines) and "|" in line and _TABLE_DIVIDER.match(lines[i + 1]):
+            rows = [_split_table_row(line)]
+            i += 2  # 跳过表头分隔行
+            while i < len(lines) and "|" in lines[i] and lines[i].strip():
+                rows.append(_split_table_row(lines[i]))
+                i += 1
+            blocks.append(_MarkdownBlock("table", _render_table(rows)))
+            continue
+
+        if re.match(r"^\s*(?:---+|___+|\*\*\*+)\s*$", line):
+            # 卡片本身已经承担章节分隔，不再叠加一排横线。
+            i += 1
+            continue
+
+        if stripped.startswith(">"):
+            quote: list[str] = []
+            while i < len(lines) and lines[i].strip().startswith(">"):
+                quote.append(re.sub(r"^\s*>\s?", "", lines[i]))
+                i += 1
+            rendered = (
+                f'<div style="background:#e7ecf3;border-left:4px solid {NAVY_SOFT};'
+                f'border-radius:0 5px 5px 0;padding:7px 9px;margin:8px 0;'
+                f'font-size:12px;color:{NAVY_SOFT};">'
+                + "<br>".join(_inline_markdown(q) for q in quote)
+                + "</div>"
+            )
+            blocks.append(_MarkdownBlock("quote", rendered))
+            continue
+
+        list_match = _LIST_ITEM.match(line)
+        if list_match:
+            items: list[str] = []
+            while i < len(lines):
+                match = _LIST_ITEM.match(lines[i])
+                if not match:
+                    break
+                indent, marker, item = match.groups()
+                symbol = marker if marker[0].isdigit() else "•"
+                left = 8 + min(24, len(indent) * 4)
+                items.append(
+                    f'<div style="padding:3px 0 3px {left}px;">'
+                    f'<span style="display:inline-block;width:24px;margin-left:-24px;'
+                    f'color:{ACCENT};font-weight:700;">{html.escape(symbol)}</span>'
+                    f'<span>{_inline_markdown(item)}</span></div>'
+                )
+                i += 1
+            blocks.append(
+                _MarkdownBlock(
+                    "list",
+                    f'<div style="margin:6px 0;font-size:14px;">{"".join(items)}</div>',
+                )
+            )
+            continue
+
+        paragraph = [stripped]
+        i += 1
+        while i < len(lines) and lines[i].strip():
+            candidate = lines[i]
+            if (
+                _FENCE.match(candidate)
+                or _HEADING.match(candidate.strip())
+                or _LIST_ITEM.match(candidate)
+                or candidate.strip().startswith(">")
+                or re.match(r"^\s*(?:---+|___+|\*\*\*+)\s*$", candidate)
+                or (
+                    i + 1 < len(lines)
+                    and "|" in candidate
+                    and _TABLE_DIVIDER.match(lines[i + 1])
+                )
+            ):
+                break
+            paragraph.append(candidate.strip())
+            i += 1
+        value = "<br>".join(_inline_markdown(part) for part in paragraph)
+        # 大模型常用【模块名】作行首标题，单独强调，避免所有文字挤成一团。
+        value = re.sub(
+            r"^【([^】]+)】\s*",
+            rf'<strong style="color:{ACCENT};">【\1】</strong> ',
+            value,
+        )
+        blocks.append(
+            _MarkdownBlock(
+                "paragraph",
+                f'<div style="font-size:14px;color:{NAVY};margin:7px 0;line-height:1.75;">'
+                f"{value}</div>",
+            )
+        )
+    return blocks
+
+
+def _markdown_card(title: str, body: str, *, continued: bool = False) -> str:
+    suffix = " · 续" if continued else ""
+    return (
+        f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
+        f'border-radius:8px;padding:11px 12px;margin-bottom:10px;">'
+        f'<div style="font-size:16px;font-weight:700;color:{NAVY_DEEP};'
+        f'padding-bottom:7px;margin-bottom:8px;border-bottom:2px solid {BORDER};">'
+        f"▍{_inline_markdown(title)}{suffix}</div>{body}</div>"
+    )
+
+
+def _markdown_cards(
+    fallback_title: str,
+    content: str,
+    *,
+    skip_sections: set[str] | None = None,
+    drop_preamble: bool = False,
+) -> list[str]:
+    """按一/二级标题拆卡片；超长章节再按块拆分，保证手机阅读节奏。"""
+    skip_sections = {s.strip() for s in (skip_sections or set())}
+    blocks = _markdown_blocks(content)
+    cards: list[str] = []
+    current_title = fallback_title or "正文"
+    current: list[str] = []
+    current_size = 0
+    continuation = False
+    skipping = False
+    first_heading = True
+    section_started = not drop_preamble
+    max_card_chars = 16000
+
+    def flush() -> None:
+        nonlocal current, current_size, continuation
+        if current:
+            cards.append(_markdown_card(current_title, "".join(current), continued=continuation))
+            current = []
+            current_size = 0
+            continuation = True
+
+    for block in blocks:
+        if block.kind == "heading":
+            heading_text = re.sub(r"\s+", "", block.text).casefold()
+            fallback_text = re.sub(r"\s+", "", fallback_title).casefold()
+            # 顶部 H1 通常与推送标题重复，保留内容但不再显示一次。
+            if first_heading and block.level == 1 and heading_text == fallback_text:
+                first_heading = False
+                continue
+            first_heading = False
+            flush()
+            current_title = block.text or fallback_title or "正文"
+            continuation = False
+            skipping = block.text.strip() in skip_sections
+            section_started = True
+            continue
+        first_heading = False
+        if skipping or not section_started:
+            continue
+        if current and current_size + len(block.rendered) > max_card_chars:
+            flush()
+        current.append(block.rendered)
+        current_size += len(block.rendered)
+    flush()
+    return cards or [_manual_card(fallback_title, content)]
+
+
+def render_merge(
+    topic: str,
+    content: str,
+    *,
+    ref: datetime,
+    source_count: int = 0,
+    ai_summary: str = "",
+    ai_model: str = "DeepSeek-V4",
+) -> str:
+    """把合并后的 Markdown 渲染成适合微信窄屏阅读的章节卡片。"""
+    topic = (topic or "合并研报").strip()
+    content = (content or "").strip()
+    ai_summary = (ai_summary or "").strip()
+    source_text = f"{source_count} 份来源" if source_count else "多份来源"
+    cards = [
+        (
+            f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
+            f'border-left:5px solid {ACCENT};border-radius:8px;padding:12px 14px;'
+            f'margin-bottom:10px;">'
+            f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};">'
+            f"章鱼 AI · 合并研报</div>"
+            f'<div style="font-size:16px;font-weight:600;color:{ACCENT};margin-top:6px;">'
+            f"{html.escape(topic)}</div>"
+            f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:6px;">'
+            f"{source_text} · 按章节整理 · {stamp(ref)}（北京时间）</div></div>"
+        )
+    ]
+    if ai_summary:
+        cards.append(_manual_ai_card(ai_summary, ai_model))
+    # Markdown 目录在微信中既不能稳定跳转又重复占屏，正文按卡片排列已自带导航。
+    cards.extend(
+        _markdown_cards(topic, content, skip_sections={"目录"}, drop_preamble=True)
+    )
+    cards.append(
+        f'<div style="background:{CARD_BG};border:1px solid {BORDER};border-radius:8px;'
+        f'padding:9px 11px;font-size:11px;color:{NAVY_SOFT};">'
+        f'<div style="font-weight:600;color:{NAVY};margin-bottom:3px;">章鱼 AI</div>'
+        f'<div>内容由 {source_text} 自动合并，表格、列表与代码已按移动端重排</div>'
+        f'<div style="margin-top:3px;">仅供研究参考，不构成投资建议</div></div>'
+    )
+    return _document(cards)
+
+
+def render_merge_title(topic: str, ref: datetime, source_count: int = 0) -> str:
+    topic = (topic or "合并研报").strip()
+    if len(topic) > 18:
+        topic = topic[:18] + "…"
+    count = f" · {source_count}份" if source_count else ""
+    return f"章鱼AI {ref:%m-%d %H:%M} · 合并研报{count} · {topic}"
 
 
 def render_manual_title(topic: str, ref: datetime) -> str:
@@ -352,23 +748,18 @@ def render_theme(analysis, *, ref: datetime | None = None) -> str:
     不做任何计算 —— 渲染层保持哑管道，方便单测直接构造假对象。
     """
     ref = ref or analysis.ref
-    parts: list[str] = []
-    parts.append(
-        f'<div style="background:{BG};padding:14px 12px;'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
-        f'\'Helvetica Neue\',Helvetica,Arial,sans-serif;color:{NAVY};'
-        f'line-height:1.6;font-size:15px;">'
-    )
-    parts.append(_theme_header(analysis, ref))
-    parts.append(_theme_overview(analysis))
+    cards: list[str] = [_theme_header(analysis, ref), _theme_overview(analysis)]
     if analysis.all_profiles:
-        parts.append(_theme_factor_card(analysis))
-    parts.append(_theme_ai_card(analysis))
-    parts.append(_theme_supervision_card(analysis))
-    parts.append(_theme_provenance_card(analysis))
-    parts.append(_theme_disclaimer_card(analysis))
-    parts.append("</div>")
-    return "".join(parts)
+        cards.append(_theme_factor_card(analysis))
+    cards.extend(
+        [
+            _theme_ai_card(analysis),
+            _theme_supervision_card(analysis),
+            _theme_provenance_card(analysis),
+            _theme_disclaimer_card(analysis),
+        ]
+    )
+    return _document(cards)
 
 
 def _theme_header(analysis, ref: datetime) -> str:
@@ -681,10 +1072,8 @@ def _rich_text(text: str) -> str:
             rest = html.escape(match.group(2))
             out.append(
                 f'<div style="font-size:14px;font-weight:700;color:{ACCENT};'
-                f'margin:10px 0 4px;">【{title}】</div>'
+                f'margin:10px 0 4px;">【{title}】{rest}</div>'
             )
-            if rest:
-                out.append(f"<div>{rest}</div>")
             continue
         out.append(f"<div>{html.escape(stripped)}</div>")
     return "".join(out)

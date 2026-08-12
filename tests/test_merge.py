@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 import tempfile
 import os
+from datetime import datetime
 
 from octopus.merge import (
     load_markdown_file,
@@ -11,6 +12,9 @@ from octopus.merge import (
     dedup_sources,
     MarkdownSource,
 )
+from octopus.notify import PushPlus, split_html_pages
+from octopus.render import render_merge
+from octopus.timeutil import CN_TZ
 
 
 class TestMarkdownLoad(unittest.TestCase):
@@ -101,6 +105,73 @@ class TestMergeIntegration(unittest.TestCase):
                 self.assertIn("报告B", html)
         finally:
             agent.close()
+
+
+class TestMergeRendering(unittest.TestCase):
+    REF = datetime(2026, 8, 12, 10, 30, tzinfo=CN_TZ)
+
+    def test_markdown_is_reflowed_for_mobile(self):
+        content = """# 合并测试
+
+> 合并元数据
+
+## 目录
+
+1. [正文](#正文)
+
+## 正文
+
+- **结论**：内容清楚
+- 第二点
+
+| 指标 | 数值 |
+|---|---:|
+| Rank IC | 0.067 |
+
+```python
+print('<safe>')
+```
+"""
+        rendered = render_merge("合并测试", content, ref=self.REF, source_count=2)
+        self.assertIn("章鱼 AI · 合并研报", rendered)
+        self.assertIn("<table", rendered)
+        self.assertIn("<pre", rendered)
+        self.assertIn("<strong", rendered)
+        self.assertNotIn("## 正文", rendered)
+        self.assertNotIn("|---|", rendered)
+        self.assertNotIn("[正文](#正文)", rendered)  # 微信内无效的目录已移除
+        self.assertIn("&lt;safe&gt;", rendered)
+
+    def test_long_html_splits_only_between_complete_cards(self):
+        content = "# 长报告\n\n" + "\n\n".join(
+            f"## 章节{i}\n\n" + ("内容" * 4000) for i in range(4)
+        )
+        rendered = render_merge("长报告", content, ref=self.REF, source_count=1)
+        pages = split_html_pages(rendered, max_content=18000)
+        self.assertGreater(len(pages), 1)
+        for page in pages:
+            self.assertTrue(page.startswith("<div"))
+            self.assertTrue(page.endswith("</div>"))
+            self.assertEqual(page.count("<div"), page.count("</div>"))
+            self.assertNotIn("<!--octopus:block-->", page)
+
+    def test_pushplus_adds_page_numbers(self):
+        class RecordingHttp:
+            def __init__(self):
+                self.payloads = []
+
+            def post_json(self, url, payload):
+                self.payloads.append(payload)
+                return {"code": 200}
+
+        # 使用模块默认 4 万字符阈值，两个独立卡片会被整理成多页。
+        blocks = [f"<div>{'甲' * 22000}</div>", f"<div>{'乙' * 22000}</div>"]
+        body = "<div>" + "<!--octopus:block-->".join(blocks) + "</div>"
+        http = RecordingHttp()
+        self.assertTrue(PushPlus(http, "token").send("长报告", body))
+        self.assertEqual(len(http.payloads), 2)
+        self.assertEqual([p["title"] for p in http.payloads], ["长报告（1/2）", "长报告（2/2）"])
+        self.assertTrue(all(p["content"].endswith("</div>") for p in http.payloads))
 
 
 if __name__ == "__main__":
