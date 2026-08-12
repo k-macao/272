@@ -16,6 +16,8 @@ from .render import (
     render_html,
     render_manual,
     render_manual_title,
+    render_merge,
+    render_merge_title,
     render_theme,
     render_theme_title,
     render_title,
@@ -207,10 +209,11 @@ class Agent:
             ai_summary, ai_model = self._refine_manual(merged.topic, merged.content)
         else:
             ai_summary, ai_model = "", ""
-        return render_manual(
+        return render_merge(
             merged.topic,
             merged.content,
             ref=ref,
+            source_count=len(merged.sources),
             ai_summary=ai_summary,
             ai_model=ai_model,
         )
@@ -232,14 +235,15 @@ class Agent:
         if use_ai:
             ai_summary, ai_model = self._refine_manual(merged.topic, merged.content) if use_ai else ("", "")
 
-        html = render_manual(
+        html = render_merge(
             merged.topic,
             merged.content,
             ref=ref,
+            source_count=len(merged.sources),
             ai_summary=ai_summary,
             ai_model=ai_model,
         )
-        title = render_manual_title(merged.topic, ref)
+        title = render_merge_title(merged.topic, ref, len(merged.sources))
         pushed = self._push(title, html, dry_run=dry_run, topics=[])
         log.info("=== 合并报告推送：%d 源 -> %s：%s", len(merged.sources), merged.topic, "成功" if pushed else "未执行/失败")
         return RunReport(

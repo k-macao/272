@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 import tempfile
 import os
+from datetime import datetime
 
 from octopus.merge import (
     load_markdown_file,
@@ -11,6 +12,9 @@ from octopus.merge import (
     dedup_sources,
     MarkdownSource,
 )
+from octopus.notify import PushPlus, split_html_pages
+from octopus.render import render_merge
+from octopus.timeutil import CN_TZ
 
 
 class TestMarkdownLoad(unittest.TestCase):
@@ -101,6 +105,96 @@ class TestMergeIntegration(unittest.TestCase):
                 self.assertIn("报告B", html)
         finally:
             agent.close()
+
+
+class TestMergeRendering(unittest.TestCase):
+    REF = datetime(2026, 8, 12, 10, 30, tzinfo=CN_TZ)
+
+    def test_markdown_is_reflowed_for_mobile(self):
+        content = """# 合并测试
+
+> **合并时间**：2026-08-12  |  **来源数**：2
+
+## 合并说明与来源追溯
+
+| 文件名 | 内容指纹 |
+|---|---|
+| a.md | abc123 |
+
+## 目录
+
+1. [正文](#正文)
+
+## 原始报告 1：正文
+
+> **文件名**：`a.md`  |  **指纹**：`abc123`
+
+- **结论**：内容清楚
+- 第二点
+
+## 一、免费开源金融数据库与工程架构
+
+这里是接入规范与代码实现说明。
+
+## 投资结论
+
+| 指标 | 数值 |
+|---|---:|
+| Rank IC | 0.067 |
+
+```python
+print('<safe>')
+```
+"""
+        rendered = render_merge("合并测试", content, ref=self.REF, source_count=2)
+        self.assertIn("章鱼 AI · 合并研报", rendered)
+        self.assertIn("<table", rendered)
+        self.assertNotIn("<pre", rendered)
+        self.assertIn("<strong", rendered)
+        self.assertNotIn("## 正文", rendered)
+        self.assertNotIn("|---|", rendered)
+        self.assertNotIn("[正文](#正文)", rendered)
+        self.assertNotIn("合并说明与来源追溯", rendered)
+        self.assertNotIn("文件名", rendered)
+        self.assertNotIn("内容指纹", rendered)
+        self.assertNotIn("原始报告 1", rendered)
+        self.assertNotIn("按章节整理", rendered)
+        self.assertNotIn("自动合并", rendered)
+        self.assertNotIn("工程架构", rendered)
+        self.assertNotIn("代码实现说明", rendered)
+        self.assertNotIn("&lt;safe&gt;", rendered)
+
+    def test_long_html_stays_one_complete_message(self):
+        content = "# 长报告\n\n" + "\n\n".join(
+            f"## 章节{i}\n\n" + ("内容" * 4000) for i in range(4)
+        )
+        rendered = render_merge("长报告", content, ref=self.REF, source_count=1)
+        pages = split_html_pages(rendered, max_content=18000)
+        self.assertEqual(len(pages), 1)
+        page = pages[0]
+        self.assertLessEqual(len(page), 18000)
+        self.assertTrue(page.startswith("<div"))
+        self.assertTrue(page.endswith("</div>"))
+        self.assertEqual(page.count("<div"), page.count("</div>"))
+        self.assertNotIn("<!--octopus:block-->", page)
+
+    def test_pushplus_sends_once_without_page_number(self):
+        class RecordingHttp:
+            def __init__(self):
+                self.payloads = []
+
+            def post_json(self, url, payload):
+                self.payloads.append(payload)
+                return {"code": 200}
+
+        blocks = [f"<div>{'甲' * 22000}</div>", f"<div>{'乙' * 22000}</div>"]
+        body = "<div>" + "<!--octopus:block-->".join(blocks) + "</div>"
+        http = RecordingHttp()
+        self.assertTrue(PushPlus(http, "token").send("长报告", body))
+        self.assertEqual(len(http.payloads), 1)
+        self.assertEqual(http.payloads[0]["title"], "长报告")
+        self.assertLessEqual(len(http.payloads[0]["content"]), 100000)
+        self.assertTrue(http.payloads[0]["content"].endswith("</div>"))
 
 
 if __name__ == "__main__":
