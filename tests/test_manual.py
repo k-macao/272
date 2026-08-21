@@ -43,11 +43,11 @@ class TestRenderManual(unittest.TestCase):
             "今日机器人板块放量上涨。\n\n关注减速器与执行器方向。",
             ref=REF,
         )
-        self.assertIn("章鱼 AI · 主题分析", html)
+        self.assertIn("章鱼 AI 全景分析", html)
+        self.assertIn("全网 AI 调研境内境外数据，由多个大模型混合部署。", html)
         self.assertIn("▍机器人板块分析", html)
         self.assertIn("今日机器人板块放量上涨。<br><br>关注减速器与执行器方向。", html)
-        self.assertIn("发布时间 2026-07-27 10:30", html)
-        self.assertIn("人工录入", html)
+        self.assertIn("作者：章鱼 ai", html)
 
     def test_escapes_html(self):
         html = render_manual("测试", "<script>alert(1)</script>\n&<>", ref=REF)
@@ -57,24 +57,19 @@ class TestRenderManual(unittest.TestCase):
 
     def test_no_topic_falls_back(self):
         html = render_manual("", "纯内容文本", ref=REF)
-        self.assertIn("AI 分析内容", html)
+        self.assertIn("▍正文", html)
         self.assertIn("纯内容文本", html)
 
 
 class TestRenderManualTitle(unittest.TestCase):
     def test_title_with_topic(self):
-        t = render_manual_title("机器人板块分析", REF)
-        self.assertIn("章鱼AI 07-27 10:30", t)
-        self.assertIn("AI分析", t)
-        self.assertIn("机器人板块分析", t)
+        self.assertEqual(render_manual_title("机器人板块分析", REF), "章鱼 AI 全景分析")
 
     def test_title_without_topic(self):
-        self.assertTrue(render_manual_title("", REF).endswith("主题"))
+        self.assertEqual(render_manual_title("", REF), "章鱼 AI 全景分析")
 
-    def test_title_truncates_long_topic(self):
-        t = render_manual_title("很" * 30, REF)
-        self.assertIn("…", t)
-        self.assertLess(len(t), len("章鱼AI 07-27 10:30 · AI分析 · ") + 30)
+    def test_title_ignores_long_topic(self):
+        self.assertEqual(render_manual_title("很" * 30, REF), "章鱼 AI 全景分析")
 
 
 class AgentPushTestCase(unittest.TestCase):
@@ -112,7 +107,8 @@ class TestAgentManualPush(AgentPushTestCase):
         self.assertEqual(report.groups, [])
         self.assertEqual(len(RecordingPush.sent), 1)
         title, html = RecordingPush.sent[0]
-        self.assertIn("机器人板块", title)
+        self.assertEqual(title, "章鱼 AI 全景分析")
+        self.assertIn("机器人板块", html)
         self.assertIn("第一段。", html)
 
     def test_manual_push_is_one_to_one_ignores_topics(self):
@@ -178,8 +174,8 @@ class TestManualWeb(unittest.TestCase):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/") as resp:
             html = resp.read().decode("utf-8")
         self.assertEqual(resp.status, 200)
-        self.assertIn("章鱼 AI · 手动主题推送", html)
-        self.assertIn("一对一推送", html)
+        self.assertIn("章鱼 AI 全景分析", html)
+        self.assertIn("多个大模型混合部署", html)
         self.assertIn("var AUTH = false;", html)  # 未配置令牌时 auth 标记为 false
 
     def test_preview_endpoint(self):
@@ -261,7 +257,7 @@ class TestManualCli(unittest.TestCase):
         text = preview.read_text(encoding="utf-8")
         self.assertIn("主题A", text)
         self.assertIn("内容B", text)
-        self.assertIn("章鱼 AI · 主题分析", text)
+        self.assertIn("章鱼 AI 全景分析", text)
 
     def test_cli_manual_topic_implies_manual(self):
         import main as main_mod
