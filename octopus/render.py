@@ -1,4 +1,4 @@
-"""推送 HTML 渲染 —— 浅灰底色 + 深蓝字体.
+"""推送 HTML 渲染 —— 电子杂志 × 电子墨水风格。
 
 微信内置浏览器会剥掉 <style> 标签，所有样式必须写成内联 style，
 且避免用 flex/grid 这类支持不稳的布局，一律用 table/div + 内联属性。
@@ -16,20 +16,38 @@ from .models import Item, SourceResult, TimeQuality
 from .timeutil import humanize, stamp
 
 # --- 配色 ------------------------------------------------------------------
-BG = "#eceff3"          # 浅灰底色
-CARD_BG = "#f6f7f9"     # 卡片底色（比背景略浅，形成层次）
-NAVY = "#12305c"        # 深蓝主字体
-NAVY_DEEP = "#0a1f3d"   # 标题深蓝
-NAVY_SOFT = "#3a5a86"   # 次要信息蓝灰
-BORDER = "#c9d3e0"
-ACCENT = "#1d4f91"      # 强调蓝
-RED = "#b3261e"         # 涨/警示（A股红涨）
-GREEN = "#1b5e20"
+BG = "#d2d5d8"          # 深浅灰主背景
+CARD_BG = "#eceef0"     # 浅灰卡片底
+NAVY = "#111111"        # 正文主色：黑
+NAVY_DEEP = "#090909"   # 标题黑
+NAVY_SOFT = "#5b5f64"   # 次要信息灰
+BORDER = "#a4a9ae"
+ACCENT = "#b7ff26"      # 荧光绿
+ACCENT_WASH = "#edf8d1" # 荧光绿浅点缀
+SURFACE_ALT = "#d9dde0" # 灰色辅助底
+CODE_BG = "#181a1d"
+CODE_TEXT = "#eff6df"
+QUOTE_BG = "#e1e4e7"
+WARN_BG = "#e7e1de"
+WARN_BORDER = "#c9beb9"
+WARN_TEXT = "#695149"
+RED = "#a63a2b"         # 风险/警示
+GREEN = "#2c6b4f"
+
+MANUAL_TITLE = "章鱼 AI 全景分析"
+MANUAL_SUBTITLE = "全网 AI 调研境内境外数据，由多个大模型混合部署。"
+MANUAL_FOOTER_AUTHOR = "作者：章鱼 ai      仅供参考，分析研究"
+MANUAL_FOOTER_NOTE = (
+    "全网境内外为你寻找蛛丝马迹-提供全景视野分析，由多模型协同推理决策，"
+    "底层所使用的大语言模型（LLM）多模式背后结合使用了多种不同的先进模型，"
+    "包括但不限于 Claude、ChatGPT、Gemini、Grok、Qwen 以及 Kimi。"
+    "根据不同的资产管理任务需求，更好地发挥各个模型的优势来提供数据支持！[加油]"
+)
 
 TIME_BADGE = {
-    TimeQuality.EXACT: ("准确", "#1d4f91"),
-    TimeQuality.DERIVED: ("推算", "#5a6f8c"),
-    TimeQuality.DATE: ("当日", "#6b7b93"),
+    TimeQuality.EXACT: ("准确", ACCENT),
+    TimeQuality.DERIVED: ("推算", NAVY_SOFT),
+    TimeQuality.DATE: ("当日", "#7a766d"),
 }
 
 # 每张顶层卡片之间插入一个不可见标记。PushPlus 正文过长时，通知层只在
@@ -43,7 +61,7 @@ def _document(cards: list[str]) -> str:
         f'<div style="background:{BG};padding:12px 10px;'
         f'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
         f'\'Helvetica Neue\',Helvetica,Arial,sans-serif;color:{NAVY};'
-        f'line-height:1.65;font-size:15px;word-break:break-word;">'
+        f'line-height:1.72;font-size:13px;word-break:break-word;">'
     )
     return outer + HTML_BLOCK_SEPARATOR.join(cards) + "</div>"
 
@@ -137,7 +155,7 @@ def _row(item: Item, ref: datetime) -> str:
     tags_html = ""
     if item.tags:
         chips = "".join(
-            f'<span style="display:inline-block;background:#dde5f0;color:{ACCENT};'
+            f'<span style="display:inline-block;background:{ACCENT_WASH};color:{ACCENT};'
             f'border-radius:3px;padding:1px 6px;margin:0 4px 0 0;font-size:11px;">'
             f"{html.escape(str(tag))}</span>"
             for tag in item.tags[:3]
@@ -250,72 +268,84 @@ def render_manual(
     if markdown is None:
         markdown = _looks_like_markdown(content)
 
-    cards: list[str] = [_manual_header(ref, ai_model=ai_model if ai_summary else "")]
+    cards: list[str] = [_manual_header(topic, ai_model=ai_model if ai_summary else "")]
     if ai_summary:
         cards.append(_manual_ai_card(ai_summary, ai_model))
 
-    body_title = topic or ("原始录入内容" if ai_summary else "AI 分析内容")
+    body_title = topic or ("原始录入内容" if ai_summary else "正文")
     if markdown:
         cards.extend(_markdown_cards(body_title, content))
     else:
         cards.append(_manual_card(body_title, content))
-    cards.append(_manual_footer(ref))
+    cards.append(_manual_footer())
     return _document(cards)
 
 
-def _manual_header(ref: datetime, ai_model: str = "") -> str:
-    sub = (
-        f"DeepSeek 大模型提炼（{html.escape(ai_model)}） · 人工录入 · 发布时间 {stamp(ref)}（北京时间）"
+def _manual_header(topic: str, ai_model: str = "") -> str:
+    topic_html = ""
+    if topic:
+        topic_html = (
+            f'<div style="margin-top:10px;background:{SURFACE_ALT};border:1px solid {BORDER};'
+            f'border-left:3px solid {ACCENT};border-radius:6px;padding:8px 9px;">'
+            f'<div style="font-size:10px;letter-spacing:.8px;color:{NAVY_SOFT};">本期主题</div>'
+            f'<div style="font-size:13px;font-weight:700;color:{NAVY_DEEP};margin-top:3px;">'
+            f"{html.escape(topic)}</div></div>"
+        )
+    model_html = (
+        f'<div style="font-size:11px;color:{NAVY_SOFT};margin-top:8px;">'
+        f"模型协同摘要：{html.escape(ai_model)}</div>"
         if ai_model
-        else f"人工录入内容 · 发布时间 {stamp(ref)}（北京时间）"
+        else ""
     )
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
-        f'border-left:5px solid {ACCENT};border-radius:8px;padding:12px 14px;'
+        f'border-left:6px solid {ACCENT};border-radius:8px;padding:13px 14px;'
         f'margin-bottom:12px;">'
-        f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};'
-        f'letter-spacing:.5px;">章鱼 AI · 主题分析</div>'
-        f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:6px;">'
-        f"{sub}</div>"
-        f"</div>"
+        f'<div style="display:inline-block;background:{ACCENT_WASH};color:{NAVY_DEEP};'
+        f'border:1px solid {ACCENT};padding:4px 10px;border-radius:4px;'
+        f'font-size:20px;font-weight:800;letter-spacing:.7px;">'
+        f"{MANUAL_TITLE}</div>"
+        f'<div style="height:3px;width:56px;background:{ACCENT};margin-top:8px;border-radius:3px;"></div>'
+        f'<div style="font-size:12px;color:{NAVY};margin-top:8px;line-height:1.7;">'
+        f"{MANUAL_SUBTITLE}</div>"
+        f"{model_html}{topic_html}</div>"
     )
 
 
 def _manual_ai_card(ai_summary: str, ai_model: str) -> str:
-    title = f"✨ DeepSeek AI 智能提炼 · 分类与摘要 ({html.escape(ai_model)})"
+    title = f"✨ DeepSeek AI 智能提炼 · 模型协同摘要 ({html.escape(ai_model)})"
     body = _rich_text(ai_summary)
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
-        f'border-left:4px solid #1b5e20;border-radius:8px;padding:12px 14px;margin-bottom:12px;">'
-        f'<div style="font-size:16px;font-weight:700;color:{NAVY_DEEP};'
-        f'padding-bottom:7px;margin-bottom:10px;border-bottom:2px solid {BORDER};">'
+        f'border-left:4px solid {ACCENT};border-radius:8px;padding:11px 12px;margin-bottom:12px;">'
+        f'<div style="font-size:14px;font-weight:700;color:{NAVY_DEEP};'
+        f'padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid {BORDER};">'
         f"▍{title}</div>"
-        f'<div style="font-size:15px;color:{NAVY};line-height:1.75;">{body}</div>'
+        f'<div style="font-size:13px;color:{NAVY};line-height:1.8;">{body}</div>'
         f"</div>"
     )
 
 
 def _manual_card(topic: str, content: str) -> str:
-    title = html.escape(topic) if topic else "AI 分析内容"
+    title = html.escape(topic) if topic else "正文"
     body = html.escape(content).replace("\n", "<br>")
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
-        f'border-radius:8px;padding:12px 14px;margin-bottom:12px;">'
-        f'<div style="font-size:16px;font-weight:700;color:{NAVY_DEEP};'
-        f'padding-bottom:7px;margin-bottom:10px;border-bottom:2px solid {BORDER};">'
+        f'border-radius:8px;padding:11px 12px;margin-bottom:12px;">'
+        f'<div style="font-size:14px;font-weight:700;color:{NAVY_DEEP};'
+        f'padding-bottom:7px;margin-bottom:9px;border-bottom:1px solid {BORDER};">'
         f"▍{title}</div>"
-        f'<div style="font-size:15px;color:{NAVY};line-height:1.75;">{body}</div>'
+        f'<div style="font-size:13px;color:{NAVY};line-height:1.82;">{body}</div>'
         f"</div>"
     )
 
 
-def _manual_footer(ref: datetime) -> str:
+def _manual_footer() -> str:
     return (
-        f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
-        f'border-radius:8px;padding:10px 12px;font-size:11px;color:{NAVY_SOFT};">'
-        f'<div style="font-weight:600;color:{NAVY};margin-bottom:4px;">章鱼 AI</div>'
-        f'<div style="margin-top:3px;">内容由人工录入，未经程序抓取校验</div>'
-        f'<div style="margin-top:3px;">仅供参考，不构成投资建议</div>'
+        f'<div style="background:{SURFACE_ALT};border:1px solid {BORDER};'
+        f'border-radius:8px;padding:10px 12px;font-size:11px;color:{NAVY};">'
+        f'<div style="font-weight:700;color:{NAVY_DEEP};margin-bottom:6px;">{MANUAL_FOOTER_AUTHOR}</div>'
+        f'<div style="line-height:1.78;">{MANUAL_FOOTER_NOTE}</div>'
         f"</div>"
     )
 
@@ -370,7 +400,7 @@ def _inline_markdown(value: str) -> str:
     escaped = re.sub(
         r"`([^`\n]+)`",
         lambda m: protect(
-            f'<code style="background:#e3e8ef;color:{NAVY_DEEP};border-radius:3px;'
+            f'<code style="background:{SURFACE_ALT};color:{NAVY_DEEP};border-radius:3px;'
             f'padding:1px 4px;font-family:Menlo,Consolas,monospace;font-size:12px;">'
             f"{m.group(1)}</code>"
         ),
@@ -421,14 +451,14 @@ def _render_table(rows: list[list[str]]) -> str:
     normalized = [r + [""] * (width - len(r)) for r in rows]
     min_width = min(760, max(300, width * 125))
     head = "".join(
-        f'<th style="background:#dde5f0;color:{NAVY_DEEP};font-weight:700;'
+        f'<th style="background:{ACCENT_WASH};color:{NAVY_DEEP};font-weight:700;'
         f'padding:6px;border:1px solid {BORDER};text-align:left;vertical-align:top;">'
         f"{_inline_markdown(cell)}</th>"
         for cell in normalized[0]
     )
     body_rows: list[str] = []
     for row_index, row in enumerate(normalized[1:]):
-        bg = CARD_BG if row_index % 2 == 0 else "#eef1f5"
+        bg = CARD_BG if row_index % 2 == 0 else SURFACE_ALT
         cells = "".join(
             f'<td style="background:{bg};padding:6px;border:1px solid {BORDER};'
             f'vertical-align:top;">{_inline_markdown(cell)}</td>'
@@ -466,14 +496,14 @@ def _markdown_blocks(text: str) -> list[_MarkdownBlock]:
             if i < len(lines):
                 i += 1
             label = (
-                f'<div style="font-size:10px;color:#9fb0c6;margin-bottom:5px;">'
+                f'<div style="font-size:10px;color:{NAVY_SOFT};margin-bottom:5px;">'
                 f"{html.escape(language)}</div>"
                 if language
                 else ""
             )
             rendered = (
                 f'<div style="margin:9px 0;background:{NAVY_DEEP};border-radius:6px;'
-                f'padding:9px 10px;color:#eef3fa;">{label}'
+                f'padding:9px 10px;color:{CODE_TEXT};">{label}'
                 f'<pre style="margin:0;white-space:pre-wrap;word-break:break-word;'
                 f'font:11px/1.55 Menlo,Consolas,monospace;">'
                 f"{html.escape(chr(10).join(code))}</pre></div>"
@@ -518,7 +548,7 @@ def _markdown_blocks(text: str) -> list[_MarkdownBlock]:
                 quote.append(re.sub(r"^\s*>\s?", "", lines[i]))
                 i += 1
             rendered = (
-                f'<div style="background:#e7ecf3;border-left:4px solid {NAVY_SOFT};'
+                f'<div style="background:{QUOTE_BG};border-left:4px solid {NAVY_SOFT};'
                 f'border-radius:0 5px 5px 0;padding:7px 9px;margin:8px 0;'
                 f'font-size:12px;color:{NAVY_SOFT};">'
                 + "<br>".join(_inline_markdown(q) for q in quote)
@@ -593,8 +623,8 @@ def _markdown_card(title: str, body: str, *, continued: bool = False) -> str:
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-radius:8px;padding:11px 12px;margin-bottom:10px;">'
-        f'<div style="font-size:16px;font-weight:700;color:{NAVY_DEEP};'
-        f'padding-bottom:7px;margin-bottom:8px;border-bottom:2px solid {BORDER};">'
+        f'<div style="font-size:14px;font-weight:700;color:{NAVY_DEEP};'
+        f'padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid {BORDER};">'
         f"▍{_inline_markdown(title)}{suffix}</div>{body}</div>"
     )
 
@@ -747,14 +777,8 @@ def render_merge_title(topic: str, ref: datetime, source_count: int = 0) -> str:
 
 
 def render_manual_title(topic: str, ref: datetime) -> str:
-    """手动主题分析的推送标题：微信通知栏只显示这一行。"""
-    base = f"章鱼AI {ref:%m-%d %H:%M} · AI分析"
-    topic = (topic or "").strip()
-    if not topic:
-        return f"{base} · 主题"
-    if len(topic) > 22:
-        topic = topic[:22] + "…"
-    return f"{base} · {topic}"
+    """手动主题分析的推送标题：按要求去掉时间，统一使用品牌标题。"""
+    return MANUAL_TITLE
 
 
 # ---------------------------------------------------------------------------
@@ -919,7 +943,7 @@ def _theme_factor_card(analysis) -> str:
                 f'<span style="display:inline-block;min-width:66px;">{html.escape(dim.label)}</span>'
                 f'<span style="color:{color};font-weight:600;">{score_text}</span>'
                 f'<span style="color:{NAVY_SOFT};"> · {html.escape(dim.level)}</span></div>'
-                f'<div style="background:#dde5f0;border-radius:3px;height:6px;margin-top:3px;">'
+                f'<div style="background:{ACCENT_WASH};border-radius:3px;height:6px;margin-top:3px;">'
                 f'<div style="background:{color};width:{width}%;height:6px;border-radius:3px;">'
                 f"</div></div>"
                 f'<div style="font-size:11px;color:{NAVY_SOFT};margin-top:3px;">'
@@ -935,7 +959,7 @@ def _theme_factor_card(analysis) -> str:
     rank_html = ""
     if len(ranking) > 1:
         chips = "".join(
-            f'<span style="display:inline-block;background:#dde5f0;'
+            f'<span style="display:inline-block;background:{ACCENT_WASH};'
             f'color:{_score_color(score)};border-radius:3px;padding:1px 6px;'
             f'margin:2px 4px 2px 0;font-size:11px;">'
             f"{html.escape(name)} {score:.0f}</span>"
@@ -1042,7 +1066,7 @@ def _supervision_row(event) -> str:
         )
     return (
         f'<div style="padding:5px 0;border-bottom:1px dashed {BORDER};">'
-        f'<span style="display:inline-block;background:#dde5f0;color:{color};'
+        f'<span style="display:inline-block;background:{ACCENT_WASH};color:{color};'
         f'border-radius:3px;padding:0 5px;margin-right:5px;font-size:11px;">'
         f"{html.escape(event.category)}</span>"
         f'<span style="font-size:13px;">{title}</span>'
@@ -1085,8 +1109,8 @@ def _theme_disclaimer_card(analysis) -> str:
         f'<div style="margin-top:4px;">{html.escape(line)}</div>' for line in disclaimer()
     )
     return (
-        f'<div style="background:#f3e9e9;border:1px solid #e0c9c9;'
-        f'border-radius:8px;padding:10px 12px;font-size:11px;color:#7a4a45;">'
+        f'<div style="background:{WARN_BG};border:1px solid {WARN_BORDER};'
+        f'border-radius:8px;padding:10px 12px;font-size:11px;color:{WARN_TEXT};">'
         f'<div style="font-weight:700;color:{RED};margin-bottom:4px;font-size:12px;">'
         f"⚠ 风险提示与免责声明</div>{body}</div>"
     )
@@ -1113,7 +1137,7 @@ def _rich_text(text: str) -> str:
             title = html.escape(match.group(1))
             rest = html.escape(match.group(2))
             out.append(
-                f'<div style="font-size:14px;font-weight:700;color:{ACCENT};'
+                f'<div style="font-size:14px;font-weight:700;color:{NAVY_DEEP};'
                 f'margin:10px 0 4px;">【{title}】{rest}</div>'
             )
             continue

@@ -38,39 +38,39 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>章鱼 AI · 手动主题推送</title>
+<title>章鱼 AI 全景分析 · 推送台</title>
 <style>
-  body{margin:0;background:#eceff3;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Helvetica,Arial,sans-serif;color:#12305c;}
-  .wrap{max-width:720px;margin:0 auto;padding:24px 16px 48px;}
-  .card{background:#f6f7f9;border:1px solid #c9d3e0;border-left:5px solid #1d4f91;border-radius:8px;padding:16px 18px;margin-bottom:14px;}
-  h1{font-size:20px;color:#0a1f3d;margin:0 0 4px;}
-  .sub{font-size:12px;color:#3a5a86;margin-bottom:12px;line-height:1.6;}
-  label{display:block;font-size:13px;font-weight:600;margin:10px 0 4px;}
-  input[type=text],textarea{width:100%;box-sizing:border-box;border:1px solid #c9d3e0;border-radius:6px;padding:8px 10px;font-size:14px;color:#12305c;background:#fff;}
-  textarea{min-height:200px;resize:vertical;line-height:1.65;}
-  input[type=text]{height:38px;}
+  body{margin:0;background:#d2d5d8;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Helvetica,Arial,sans-serif;color:#111111;}
+  .wrap{max-width:720px;margin:0 auto;padding:20px 14px 40px;}
+  .card{background:#eceef0;border:1px solid #a4a9ae;border-left:6px solid #b7ff26;border-radius:8px;padding:14px 16px;margin-bottom:12px;}
+  h1{display:inline-block;font-size:20px;line-height:1.2;color:#090909;background:#edf8d1;border:1px solid #b7ff26;margin:0 0 6px;padding:4px 10px;border-radius:4px;letter-spacing:.6px;}
+  .sub{font-size:12px;color:#111111;margin-bottom:12px;line-height:1.7;}
+  label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;letter-spacing:.2px;}
+  input[type=text],textarea{width:100%;box-sizing:border-box;border:1px solid #a4a9ae;border-radius:6px;padding:8px 10px;font-size:13px;color:#111111;background:#f5f6f7;}
+  textarea{min-height:220px;resize:vertical;line-height:1.75;}
+  input[type=text]{height:36px;}
   .row{display:flex;gap:10px;margin-top:14px;}
-  button{flex:1;border:0;border-radius:6px;padding:12px 0;font-size:15px;font-weight:600;cursor:pointer;}
-  #btnPreview{background:#dde5f0;color:#1d4f91;}
-  #btnPush{background:#12305c;color:#fff;}
-  #status{font-size:13px;margin-top:10px;color:#3a5a86;min-height:18px;}
-  #status.ok{color:#1b5e20;}
-  #status.err{color:#b3261e;}
-  .token-note{font-size:12px;color:#3a5a86;margin-top:8px;}
-  .p-title{font-size:14px;font-weight:700;color:#0a1f3d;margin:14px 0 8px;}
-  #preview{border:1px solid #c9d3e0;border-radius:8px;overflow:hidden;background:#eceff3;}
-  #frame{width:100%;min-height:300px;border:0;background:#eceff3;display:block;}
+  button{flex:1;border:0;border-radius:6px;padding:11px 0;font-size:13px;font-weight:700;cursor:pointer;}
+  #btnPreview{background:#edf8d1;color:#111111;}
+  #btnPush{background:#202327;color:#b7ff26;}
+  #status{font-size:12px;margin-top:10px;color:#5b5f64;min-height:18px;}
+  #status.ok{color:#2c6b4f;}
+  #status.err{color:#a63a2b;}
+  .token-note{font-size:12px;color:#5b5f64;margin-top:8px;line-height:1.7;}
+  .p-title{font-size:13px;font-weight:700;color:#090909;margin:14px 0 8px;letter-spacing:.2px;}
+  #preview{border:1px solid #a4a9ae;border-radius:8px;overflow:hidden;background:#d2d5d8;}
+  #frame{width:100%;min-height:320px;border:0;background:#d2d5d8;display:block;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>章鱼 AI · 手动主题推送</h1>
-    <div class="sub">一对一推送：直接发到 token 所属账号的微信，不走群组。<br>录入主题内容后，支持自动调用 DeepSeek 大模型 API（如配有 DEEPSEEK_API_KEY）进行智能提炼、分类与摘要，再组合推送到微信。</div>
-    <label for="topic">AI 分析主题（可选）</label>
-    <input type="text" id="topic" placeholder="例如：机器人板块分析">
-    <label for="content">AI 分析内容（必填）</label>
-    <textarea id="content" placeholder="粘贴或输入 AI 分析全文，支持多行……"></textarea>
+    <h1>章鱼 AI 全景分析</h1>
+    <div class="sub">全网 AI 调研境内境外数据，由多个大模型混合部署。<br>这里用于录入正文、预览微信长页效果，并一对一发送到 token 所属账号，不走群组。</div>
+    <label for="topic">分析主题（可选）</label>
+    <input type="text" id="topic" placeholder="例如：AI 应用全景、机器人板块、海外模型动态">
+    <label for="content">分析正文（必填）</label>
+    <textarea id="content" placeholder="粘贴或输入分析全文，支持多行；页面会自动渲染成适合微信阅读的竖版长页……"></textarea>
     <div class="row">
       <button id="btnPreview" type="button">预览效果</button>
       <button id="btnPush" type="button">发送推送</button>
