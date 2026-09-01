@@ -23,7 +23,8 @@ NAVY_DEEP = "#090909"   # 标题黑
 NAVY_SOFT = "#5b5f64"   # 次要信息灰
 BORDER = "#a4a9ae"
 ACCENT = "#b7ff26"      # 荧光绿
-ACCENT_WASH = "#edf8d1" # 荧光绿浅点缀
+ACCENT_BG = "#202327"   # 荧光绿文字底色（深底 + 荧光绿字，保证可读）
+ACCENT_WASH = "#edf8d1" # 荧光绿浅点缀（仅用于非荧光绿文字的背景/边框）
 SURFACE_ALT = "#d9dde0" # 灰色辅助底
 CODE_BG = "#181a1d"
 CODE_TEXT = "#eff6df"
@@ -101,7 +102,8 @@ def _header(total: int, window_minutes: int, ref: datetime) -> str:
         f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:6px;">'
         f'扫描时间 {stamp(ref)}（北京时间）</div>'
         f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:3px;">'
-        f'本轮新增 <b style="color:{ACCENT};font-size:15px;">{total}</b> 条'
+        f'本轮新增 <b style="background:{ACCENT_BG};color:{ACCENT};'
+        f'padding:1px 6px;border-radius:3px;font-size:15px;">{total}</b> 条'
         f' · 时间窗口 {window_text} · 全部条目已校验发布时间</div>'
         f"</div>"
     )
@@ -142,7 +144,8 @@ def _row(item: Item, ref: datetime) -> str:
     badge_text, badge_color = TIME_BADGE.get(item.time_quality, ("", NAVY_SOFT))
 
     meta = (
-        f'<span style="color:{ACCENT};font-weight:600;">{when}</span>'
+        f'<span style="background:{ACCENT_BG};color:{ACCENT};'
+        f'padding:1px 6px;border-radius:3px;font-weight:600;">{when}</span>'
         f'<span style="color:{NAVY_SOFT};"> · {exact}</span>'
     )
     if badge_text and item.time_quality is not TimeQuality.EXACT:
@@ -155,7 +158,7 @@ def _row(item: Item, ref: datetime) -> str:
     tags_html = ""
     if item.tags:
         chips = "".join(
-            f'<span style="display:inline-block;background:{ACCENT_WASH};color:{ACCENT};'
+            f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
             f'border-radius:3px;padding:1px 6px;margin:0 4px 0 0;font-size:11px;">'
             f"{html.escape(str(tag))}</span>"
             for tag in item.tags[:3]
@@ -415,7 +418,8 @@ def _inline_markdown(value: str) -> str:
             return label
         url = html.escape(raw_url, quote=True)
         return protect(
-            f'<a href="{url}" style="color:{ACCENT};text-decoration:none;">{label}</a>'
+            f'<a href="{url}" style="background:{ACCENT_BG};color:{ACCENT};'
+            f'padding:1px 5px;border-radius:3px;text-decoration:none;">{label}</a>'
         )
 
     escaped = re.sub(r"\[([^\]]+)]\(([^)\s]+)(?:\s+[^)]*)?\)", link, escaped)
@@ -569,8 +573,11 @@ def _markdown_blocks(text: str) -> list[_MarkdownBlock]:
                 left = 8 + min(24, len(indent) * 4)
                 items.append(
                     f'<div style="padding:3px 0 3px {left}px;">'
-                    f'<span style="display:inline-block;width:24px;margin-left:-24px;'
-                    f'color:{ACCENT};font-weight:700;">{html.escape(symbol)}</span>'
+                    f'<span style="display:inline-block;width:24px;box-sizing:border-box;'
+                    f'margin-left:-24px;background:{ACCENT_BG};color:{ACCENT};'
+                    f'padding:1px 5px;border-radius:3px;text-align:center;'
+                    f'font-weight:700;">'
+                    f'{html.escape(symbol)}</span>'
                     f'<span>{_inline_markdown(item)}</span></div>'
                 )
                 i += 1
@@ -605,7 +612,8 @@ def _markdown_blocks(text: str) -> list[_MarkdownBlock]:
         # 大模型常用【模块名】作行首标题，单独强调，避免所有文字挤成一团。
         value = re.sub(
             r"^【([^】]+)】\s*",
-            rf'<strong style="color:{ACCENT};">【\1】</strong> ',
+            rf'<strong style="background:{ACCENT_BG};color:{ACCENT};'
+            rf'padding:1px 6px;border-radius:3px;">【\1】</strong> ',
             value,
         )
         blocks.append(
@@ -752,8 +760,9 @@ def render_merge(
             f'margin-bottom:10px;">'
             f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};">'
             f"章鱼 AI · 合并研报</div>"
-            f'<div style="font-size:16px;font-weight:600;color:{ACCENT};margin-top:6px;">'
-            f"{html.escape(topic)}</div>"
+            f'<div style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+            f'padding:2px 8px;border-radius:4px;font-size:16px;font-weight:600;'
+            f'margin-top:6px;">{html.escape(topic)}</div>'
             f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:6px;">'
             f"{stamp(ref)}（北京时间）</div></div>"
         )
@@ -837,8 +846,9 @@ def _theme_header(analysis, ref: datetime) -> str:
         f'margin-bottom:12px;">'
         f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};'
         f'letter-spacing:.5px;">章鱼 AI · 主题因子分析</div>'
-        f'<div style="font-size:16px;font-weight:600;color:{ACCENT};margin-top:6px;">'
-        f"{topic}</div>"
+        f'<div style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+        f'padding:2px 8px;border-radius:4px;font-size:16px;font-weight:600;'
+        f'margin-top:6px;">{topic}</div>'
         f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:6px;">'
         f"A股市场监督管理视角 · qlib Alpha158 因子模型 · {engine}</div>"
         f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:3px;">'
