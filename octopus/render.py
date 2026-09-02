@@ -165,8 +165,12 @@ def _row(item: Item, ref: datetime) -> str:
         )
         tags_html = f'<div style="margin-top:4px;">{chips}</div>'
 
+    quote_html = _quote_line(item)
+    brief_html = _brief_line(item)
+
     summary_html = ""
-    if item.summary:
+    brief_text = (item.ai_brief or "").strip()
+    if item.summary and item.summary.strip() != brief_text:
         summary_html = (
             f'<div style="font-size:13px;color:{NAVY};opacity:.85;margin-top:4px;">'
             f"{html.escape(item.summary)}</div>"
@@ -175,10 +179,63 @@ def _row(item: Item, ref: datetime) -> str:
     return (
         f'<div style="padding:8px 0;border-bottom:1px dashed {BORDER};">'
         f'<div style="font-size:14px;">{title_html}</div>'
-        f"{summary_html}"
+        f"{quote_html}{brief_html}{summary_html}"
         f'<div style="font-size:12px;margin-top:4px;">{meta}</div>'
         f"{tags_html}"
         f"</div>"
+    )
+
+
+def _quote_line(item: Item) -> str:
+    """现价行：没有对应标的或行情缺失时整行省略，绝不写假数字。"""
+    if item.last_price is None or item.last_price <= 0:
+        return ""
+    chg = item.price_change
+    if chg is None:
+        color = NAVY
+        chg_html = ""
+    elif chg > 0:
+        color = RED
+        chg_html = f'<span style="color:{color};margin-left:4px;">+{chg:.2f}%</span>'
+    elif chg < 0:
+        color = GREEN
+        chg_html = f'<span style="color:{color};margin-left:4px;">{chg:.2f}%</span>'
+    else:
+        color = NAVY_SOFT
+        chg_html = f'<span style="color:{color};margin-left:4px;">0.00%</span>'
+
+    name = html.escape((item.price_name or "").strip())
+    code = html.escape((item.price_code or "").strip())
+    if name and code:
+        label = f"{name} {code}"
+    else:
+        label = name or code
+    label_html = (
+        f'<span style="color:{NAVY_SOFT};margin-right:6px;">{label}</span>' if label else ""
+    )
+    return (
+        f'<div style="font-size:12px;margin-top:4px;">'
+        f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+        f'border-radius:3px;padding:1px 6px;margin-right:6px;font-size:11px;font-weight:700;">'
+        f"现价</span>"
+        f"{label_html}"
+        f'<span style="color:{color};font-weight:700;">{item.last_price:.2f}</span>'
+        f"{chg_html}</div>"
+    )
+
+
+def _brief_line(item: Item) -> str:
+    """一句总结：大模型产出标 AI，规则化降级标 摘要，不假装。"""
+    brief = (item.ai_brief or "").strip()
+    if not brief:
+        return ""
+    label = "AI" if item.ai_brief_from_model else "摘要"
+    return (
+        f'<div style="font-size:13px;color:{NAVY};margin-top:4px;line-height:1.65;">'
+        f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+        f'border-radius:3px;padding:1px 6px;margin-right:6px;font-size:11px;font-weight:700;">'
+        f"{label}</span>"
+        f"{html.escape(brief)}</div>"
     )
 
 
@@ -213,6 +270,8 @@ def _footer(
         names = "、".join(r.source_label for r in failures)
         lines.append(f"本轮未取到数据：{names}（已自动重试，下轮继续）")
     lines.append("时间校验：仅推送带可验证发布时间的条目，无时间戳或时间异常的一律丢弃")
+    lines.append("现价为抓取时刻行情快照（东财优先，失败降级 Yahoo）；无对应标的则不展示")
+    lines.append("每条附一句总结：配置了 DeepSeek 则为 AI 生成，否则为规则化摘要，均不编造数据")
     lines.append("内容由程序自动抓取整合，仅供参考，不构成投资建议")
 
     body = "".join(

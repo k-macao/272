@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import MagicMock
 
-from octopus.ai import SYSTEM_PROMPT, DEEPSEEK_API_URL, DeepSeekAI
+from octopus.ai import SYSTEM_PROMPT, NEWS_BRIEF_PROMPT, DEEPSEEK_API_URL, DeepSeekAI
 from octopus.http import FetchError
 
 
@@ -57,6 +57,27 @@ class TestDeepSeekAI(unittest.TestCase):
         ok, msg = client.analyze("主题", "内容")
         self.assertFalse(ok)
         self.assertIn("DeepSeek API 调用异常", msg)
+
+    def test_summarize_news_success(self):
+        http = MagicMock()
+        http.post_json.return_value = {
+            "choices": [{"message": {"content": "1. 宁德时代拟回购\n2. 嘉美包装封板"}}]
+        }
+        client = DeepSeekAI("sk-test", model="deepseek-v4-flash", http=http)
+        ok, text = client.summarize_news(
+            [(1, "宁德时代拟回购400亿", "公司公告"), (2, "嘉美包装封板", "")]
+        )
+        self.assertTrue(ok)
+        self.assertIn("宁德时代拟回购", text)
+        url, payload = http.post_json.call_args[0]
+        self.assertEqual(url, DEEPSEEK_API_URL)
+        self.assertEqual(payload["messages"][0]["content"], NEWS_BRIEF_PROMPT)
+        self.assertIn("宁德时代拟回购400亿", payload["messages"][1]["content"])
+
+    def test_summarize_news_missing_key(self):
+        ok, msg = DeepSeekAI("").summarize_news([(1, "标题", "摘要")])
+        self.assertFalse(ok)
+        self.assertIn("未配置 DeepSeek API Key", msg)
 
 
 if __name__ == "__main__":

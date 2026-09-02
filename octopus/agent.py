@@ -103,6 +103,9 @@ class Agent:
         total = sum(len(items) for _, items in groups)
         newest = _newest(groups)
 
+        if total:
+            self._enrich_news(groups)
+
         html = render_html(
             groups,
             total=total,
@@ -401,6 +404,31 @@ class Agent:
         )
         report.analysis = analysis  # type: ignore[attr-defined]
         return report
+
+    # ------------------------------------------------------------------
+    def _enrich_news(self, groups: list[tuple[SourceResult, list[Item]]]) -> None:
+        """给每条情报补现价与一句总结。失败只记日志，不影响推送。"""
+        items = [item for _, bag in groups for item in bag]
+        if not items:
+            return
+        try:
+            from .enrich import enrich_news
+
+            stats = enrich_news(
+                items,
+                http=self.http,
+                api_key=self.config.deepseek_api_key,
+                model=self.config.deepseek_model,
+            )
+            log.info(
+                "情报增强：%d 条中现价 %d，AI 总结 %d，规则摘要 %d",
+                stats.get("items", 0),
+                stats.get("quotes", 0),
+                stats.get("ai", 0),
+                stats.get("rule", 0),
+            )
+        except Exception as exc:  # noqa: BLE001 - 增强失败不能丢掉已经校验过的情报
+            log.warning("情报增强失败（不影响推送）：%s", exc)
 
     # ------------------------------------------------------------------
     def _push(self, title: str, html: str, *, dry_run: bool, topics: list[str] | None = None) -> bool:
