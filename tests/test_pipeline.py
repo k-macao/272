@@ -181,8 +181,8 @@ class TestRender(unittest.TestCase):
             self._groups(), total=2, window_minutes=180, ref=REF,
             failures=[], degraded=[],
         )
-        self.assertIn("#eceff3", html)   # 浅灰底
-        self.assertIn("#12305c", html)   # 深蓝字
+        self.assertIn("#eceef0", html)   # 浅灰卡片底
+        self.assertIn("#111111", html)   # 正文主色
         self.assertIn("章鱼 AI", html)
 
     def test_html_contains_items_and_times(self):
@@ -232,6 +232,25 @@ class TestRender(unittest.TestCase):
     def test_title_truncates_long_headline(self):
         long_item = item("这是一条非常非常长的新闻标题" * 5, 1)
         self.assertLessEqual(len(render_title(1, REF, long_item)), 60)
+
+    def test_html_renders_price_and_brief(self):
+        result = SourceResult(source="demo", source_label="示例源")
+        news = item("宁德时代拟回购400亿", 12)
+        news.last_price = 188.5
+        news.price_change = 2.31
+        news.price_name = "宁德时代"
+        news.price_code = "300750"
+        news.ai_brief = "拟斥资回购，关注后续进度。"
+        news.ai_brief_from_model = True
+        result.items = [news]
+        html = render_html(
+            [(result, [news])], total=1, window_minutes=180, ref=REF,
+            failures=[], degraded=[],
+        )
+        self.assertIn(">现价</span>", html)
+        self.assertIn("188.50", html)
+        self.assertIn("拟斥资回购，关注后续进度。", html)
+        self.assertIn(">AI</span>", html)
 
 
 if __name__ == "__main__":

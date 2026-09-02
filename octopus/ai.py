@@ -22,6 +22,17 @@ SYSTEM_PROMPT = """你是一位专业的金融及产业研究分析师和精炼�
 【核心结论】：用 1-2 句简明扼要的话概括最关键的结论或逻辑
 【关键信息提炼】：精炼列举 3-5 点最重要的要点、数据或细节"""
 
+# 定时情报：给每条新闻写一句总结。模型只看到标题与摘要，接触不到行情数字，
+# 也就无从编造现价；现价由 enrich 层单独拉取。
+NEWS_BRIEF_PROMPT = """你是章鱼 AI 的情报摘要引擎。对用户给出的每条 A 股情报，各写一句不超过 40 字的中性总结。
+硬性要求：
+1. 只能使用该条标题与摘要中已经出现的事实，严禁编造价格、涨跌幅、机构观点或未出现的数据。
+2. 不做买卖建议、不给目标价、不承诺收益、不用「稳赚/必涨」这类绝对化措辞。
+3. 按编号逐行输出，格式严格为：
+1. <一句话>
+2. <一句话>
+不要输出其它内容、不要写开场白。"""
+
 # 主题因子分析：把「事实清单」交给大模型解读，模型只负责组织语言与归因，
 # 不负责编造数字 —— 所有数值都由本地因子引擎算好后传入。
 THEME_SYSTEM_PROMPT = """你是一位资深的 A 股量化研究员兼合规风控专员（章鱼 AI · 因子分析引擎）。
@@ -98,6 +109,32 @@ class DeepSeekAI:
             f"{facts[:12000]}"
         )
         return self._chat(system, user_prompt, temperature=0.4, max_tokens=2000)
+
+    # ------------------------------------------------------------------
+    def summarize_news(
+        self, entries: list[tuple[int, str, str]]
+    ) -> tuple[bool, str]:
+        """按条生成一句总结。
+
+        entries: [(序号, 标题, 摘要), ...]，序号从 1 起，与输出编号对应。
+        返回 (ok, 模型原文)；调用方负责按编号解析。失败时第二项为错误信息。
+        """
+        if not self.api_key:
+            return False, "未配置 DeepSeek API Key"
+        if not entries:
+            return True, ""
+
+        lines: list[str] = []
+        for num, title, summary in entries:
+            piece = f"{num}. 标题：{(title or '').strip()[:80]}"
+            digest = (summary or "").strip()
+            if digest:
+                piece += f"\n   摘要：{digest[:120]}"
+            lines.append(piece)
+        user_prompt = "请为下列情报各写一句总结：\n\n" + "\n".join(lines)
+        return self._chat(
+            NEWS_BRIEF_PROMPT, user_prompt, temperature=0.2, max_tokens=800
+        )
 
     # ------------------------------------------------------------------
     def _chat(

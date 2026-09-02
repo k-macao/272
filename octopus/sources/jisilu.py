@@ -141,8 +141,10 @@ class JisiluSource(Source):
             extra={
                 "bond_id": bond_id,
                 "price": price,
+                "increase_rt": chg,
                 "premium_rt": premium,
                 "dblow": dblow,
+                "stock_nm": stock_nm,
                 "kind": kind,
             },
         )

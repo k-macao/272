@@ -99,9 +99,20 @@ class AgentTestCase(unittest.TestCase):
 
     def _agent(self, cfg, push_cls=RecordingPush):
         import octopus.agent as mod
+        from octopus.http import FetchError
 
         mod.PushPlus = push_cls
-        return Agent(cfg, base_dir=self.base)
+        agent = Agent(cfg, base_dir=self.base)
+
+        def _offline(*args, **kwargs):
+            raise FetchError("offline")
+
+        # 离线：行情/AI 网络层一律失败，enrich 走本地规则化摘要
+        agent.http.json = _offline
+        agent.http.post_json = _offline
+        agent.http.get = _offline
+        agent.http.text = _offline
+        return agent
 
 
 class TestAgentFlow(AgentTestCase):
@@ -234,12 +245,41 @@ class TestAgentFlow(AgentTestCase):
         self.assertTrue(report.pushed)  # dry-run 视为成功
         self.assertIn("源A", report.html)
 
+    def test_enriches_live_quote_into_html(self):
+        """标题带代码时，现价写入推送正文；无 Key 时一句总结走规则摘要。"""
+        REGISTRY["a"] = make_source("a", "源A", ["宁德时代(300750)拟回购"])
+        agent = self._agent(self._config())
+
+        def json(url, **kwargs):
+            if "ulist" in url:
+                return {
+                    "data": {
+                        "diff": [
+                            {"f2": 188.5, "f3": 2.31, "f12": "300750", "f14": "宁德时代"}
+                        ]
+                    }
+                }
+            from octopus.http import FetchError
+
+            raise FetchError("offline")
+
+        agent.http.json = json
+        report = agent.run_once(ref=REF)
+        self.assertIn(">现价</span>", report.html)
+        self.assertIn("188.50", report.html)
+        self.assertIn("+2.31%", report.html)
+        self.assertIn(">摘要</span>", report.html)
+        news = report.groups[0][1][0]
+        self.assertEqual(news.last_price, 188.5)
+        self.assertTrue(news.ai_brief)
+
     def test_html_output_is_styled(self):
         REGISTRY["a"] = make_source("a", "源A", ["宁德时代回购"])
         report = self._agent(self._config()).run_once(ref=REF)
-        self.assertIn("#eceff3", report.html)  # 浅灰底
-        self.assertIn("#12305c", report.html)  # 深蓝字
+        self.assertIn("#eceef0", report.html)  # 浅灰卡片底
+        self.assertIn("#111111", report.html)  # 正文主色
         self.assertIn("宁德时代回购", report.html)
+        self.assertIn("摘要", report.html)  # 无 API Key 时规则化一句总结
 
     def test_state_persisted_to_disk(self):
         REGISTRY["a"] = make_source("a", "源A", ["会被记住的新闻"])

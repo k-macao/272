@@ -207,7 +207,14 @@ def _print_summary(report) -> None:
         print(f"\n【{result.source_label}】")
         for item in items:
             when = f"{item.published_at:%m-%d %H:%M}" if item.published_at else "??"
-            print(f"  · {when} [{item.time_quality.value:7s}] {item.title[:60]}")
+            bits = [f"  · {when} [{item.time_quality.value:7s}] {item.title[:60]}"]
+            if item.last_price is not None:
+                chg = "" if item.price_change is None else f" {item.price_change:+.2f}%"
+                bits.append(f"    现价 {item.price_name or item.price_code} {item.last_price:.2f}{chg}")
+            if item.ai_brief:
+                tag = "AI" if item.ai_brief_from_model else "摘要"
+                bits.append(f"    {tag} {item.ai_brief}")
+            print("\n".join(bits))
     print()
 
 

@@ -63,6 +63,7 @@ class IWenCaiSource(Source):
             high_days = str(row.get("high_days") or "").strip()
             change = row.get("change_rate")
             turnover = row.get("turnover_rate")
+            latest = row.get("latest")
 
             title_bits = [f"{stock}({code}) 封板"]
             if high_days:
@@ -95,6 +96,7 @@ class IWenCaiSource(Source):
                         "code": code,
                         "stock": stock,
                         "change_rate": change,
+                        "price": latest if isinstance(latest, (int, float)) else None,
                         "limit_up_total": today.get("num"),
                         "limit_up_rate": today.get("rate"),
                         "kind": "涨停",
