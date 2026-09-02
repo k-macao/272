@@ -3,14 +3,15 @@ name: 章鱼AI 抓取
 on:
   schedule:
     # 每 30 分钟一次。GitHub Actions 用 UTC，这里覆盖全天；
-    # 抓取程序内部按 A 股交易时段自行判断哪些源该产出内容。
+    # 抓取程序内部按 A 股交易时段自行判断哪些源该产出内容，
+    # 并按北京时间 23:00–07:00 免打扰时段自行休眠（秒级退出，成功态）。
     - cron: "0,30 * * * *"
   workflow_dispatch:
     inputs:
       window_minutes:
         description: "时间窗口（分钟）"
         required: false
-        default: “300"
+        default: "180"
       dry_run:
         description: "只抓不推（true/false）"
         required: false
@@ -55,6 +56,8 @@ jobs:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           PUSHPLUS_TOPIC: ${{ secrets.PUSHPLUS_TOPIC }}
           DATAYES_TOKEN: ${{ secrets.DATAYES_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
           OCTOPUS_WINDOW_MINUTES: ${{ github.event.inputs.window_minutes || '180' }}
           TZ: Asia/Shanghai
         run: |
