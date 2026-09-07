@@ -1215,19 +1215,9 @@ def _rich_text(text: str) -> str:
 
 
 def render_theme_title(topic: str, analysis=None, ref: datetime | None = None) -> str:
-    """主题分析推送的标题：主题 + 综合分 + 监管风险，一眼看清。"""
-    ref = ref or (analysis.ref if analysis is not None else None)
-    base = f"章鱼AI {ref:%m-%d %H:%M} · 因子分析" if ref else "章鱼AI · 因子分析"
-    topic = (topic or "").strip() or "主题"
-    if len(topic) > 16:
-        topic = topic[:16] + "…"
+    """主题因子分析推送的固定标题。
 
-    extra = ""
-    if analysis is not None:
-        scores = [p.composite for p in analysis.profiles if p.composite is not None]
-        if scores:
-            extra = f" · 因子{sum(scores) / len(scores):.0f}分"
-        level = analysis.supervision.risk_level
-        if level in ("高", "中"):
-            extra += f" · 监管风险{level}"
-    return f"{base} · {topic}{extra}"
+    标题用于微信通知栏展示，统一口径，避免主题、分数或风险等级变化导致
+    通知标题不一致。
+    """
+    return "章鱼 AI·全景分析（事件因子分析）"
