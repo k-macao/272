@@ -35,6 +35,10 @@ WARN_TEXT = "#695149"
 RED = "#a63a2b"         # 风险/警示
 GREEN = "#2c6b4f"
 
+#: 全部推送统一使用的固定标题：微信通知栏横幅只显示这一行，
+#: 定时抓取、手动分析、合并研报、主题因子分析四种推送共用同一口径。
+PUSH_TITLE = "章鱼 AI · 全景分析（实时事件因子）"
+
 MANUAL_TITLE = "章鱼 AI 全景分析"
 MANUAL_SUBTITLE = "全网 AI 调研境内境外数据，由多个大模型混合部署。"
 MANUAL_FOOTER_AUTHOR = "作者：章鱼 ai      仅供参考，分析研究"
@@ -292,16 +296,12 @@ def _window_text(minutes: int) -> str:
 
 
 def render_title(total: int, ref: datetime, top: Item | None) -> str:
-    """推送标题：微信通知栏只显示这一行，要一眼看出有没有料。"""
-    base = f"章鱼AI {ref:%m-%d %H:%M}"
-    if total == 0:
-        return f"{base} · 本轮无新增"
-    if top is not None:
-        headline = top.title.strip()
-        if len(headline) > 22:
-            headline = headline[:22] + "…"
-        return f"{base} · {total}条 · {headline}"
-    return f"{base} · {total}条新情报"
+    """定时抓取推送的标题。
+
+    全场景统一固定标题：微信通知栏只显示这一行，条数、时间、头条等
+    参数仅保留在签名中（调用方与历史数据兼容），不再参与拼接。
+    """
+    return PUSH_TITLE
 
 
 # ---------------------------------------------------------------------------
@@ -838,15 +838,13 @@ def render_merge(
 
 
 def render_merge_title(topic: str, ref: datetime, source_count: int = 0) -> str:
-    topic = (topic or "合并研报").strip()
-    if len(topic) > 18:
-        topic = topic[:18] + "…"
-    return f"章鱼AI {ref:%m-%d %H:%M} · 合并研报 · {topic}"
+    """合并研报推送的标题：全场景统一固定标题。"""
+    return PUSH_TITLE
 
 
 def render_manual_title(topic: str, ref: datetime) -> str:
-    """手动主题分析的推送标题：按要求去掉时间，统一使用品牌标题。"""
-    return MANUAL_TITLE
+    """手动主题分析的推送标题：全场景统一固定标题。"""
+    return PUSH_TITLE
 
 
 # ---------------------------------------------------------------------------
@@ -1215,9 +1213,9 @@ def _rich_text(text: str) -> str:
 
 
 def render_theme_title(topic: str, analysis=None, ref: datetime | None = None) -> str:
-    """主题因子分析推送的固定标题。
+    """主题因子分析推送的标题：全场景统一固定标题。
 
     标题用于微信通知栏展示，统一口径，避免主题、分数或风险等级变化导致
     通知标题不一致。
     """
-    return "章鱼 AI·全景分析（事件因子分析）"
+    return PUSH_TITLE

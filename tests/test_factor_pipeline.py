@@ -26,7 +26,7 @@ from octopus.factor.market import (
 )
 from octopus.factor.pipeline import ThemePipeline, build_facts, rule_based_report
 from octopus.http import FetchError
-from octopus.render import render_theme, render_theme_title
+from octopus.render import PUSH_TITLE, render_theme, render_theme_title
 from tests.fixtures.factor_samples import (
     ANNOUNCEMENTS,
     BOARD_MEMBERS,
@@ -529,22 +529,24 @@ class TestRenderTheme(PipelineTestCase):
     def test_shows_disclaimer(self):
         self.assertIn("不构成", self.html)
 
-    def test_title_includes_topic_and_score(self):
+    def test_title_is_unified(self):
+        """全部推送标题统一，不随主题/分数变化。"""
         title = render_theme_title("人形机器人", self.analysis, ref=REF)
-        self.assertIn("人形机器人", title)
-        self.assertIn("因子分析", title)
-        self.assertRegex(title, r"因子\d+分")
+        self.assertEqual(title, PUSH_TITLE)
+        self.assertEqual(title, "章鱼 AI · 全景分析（实时事件因子）")
 
-    def test_title_flags_regulatory_risk(self):
+    def test_title_ignores_regulatory_risk(self):
+        """监管风险只呈现在正文里，不塞进通知标题。"""
         title = render_theme_title("人形机器人", self.analysis, ref=REF)
-        self.assertIn("监管风险", title)
+        self.assertEqual(title, PUSH_TITLE)
+        self.assertNotIn("监管风险", title)
 
-    def test_title_truncates_long_topic(self):
+    def test_title_ignores_long_topic(self):
         title = render_theme_title("很" * 40, self.analysis, ref=REF)
-        self.assertIn("…", title)
+        self.assertEqual(title, PUSH_TITLE)
 
     def test_renders_without_analysis(self):
-        self.assertIn("主题", render_theme_title("主题", None, ref=REF))
+        self.assertEqual(render_theme_title("主题", None, ref=REF), PUSH_TITLE)
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +585,8 @@ class TestAgentPushTheme(PipelineTestCase):
         self.assertTrue(report.pushed)
         self.assertEqual(len(RecordingPush.sent), 1)
         title, html = RecordingPush.sent[0]
-        self.assertIn("人形机器人", title)
+        self.assertEqual(title, PUSH_TITLE)
+        self.assertIn("人形机器人", html)
         self.assertIn("量化因子评分", html)
 
     def test_push_theme_is_one_to_one(self):
