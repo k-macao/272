@@ -170,20 +170,22 @@ def _row(item: Item, ref: datetime) -> str:
         tags_html = f'<div style="margin-top:4px;">{chips}</div>'
 
     quote_html = _quote_line(item)
-    brief_html = _brief_line(item)
+    analysis_html = _analysis_block(item)
+    related_html = _related_block(item)
 
     summary_html = ""
-    brief_text = (item.ai_brief or "").strip()
-    if item.summary and item.summary.strip() != brief_text:
+    analysis_text = (item.ai_analysis or "").strip()
+    summary_text = (item.summary or "").strip()
+    if summary_text and summary_text not in analysis_text:
         summary_html = (
             f'<div style="font-size:13px;color:{NAVY};opacity:.85;margin-top:4px;">'
-            f"{html.escape(item.summary)}</div>"
+            f"{html.escape(summary_text)}</div>"
         )
 
     return (
         f'<div style="padding:8px 0;border-bottom:1px dashed {BORDER};">'
         f'<div style="font-size:14px;">{title_html}</div>'
-        f"{quote_html}{brief_html}{summary_html}"
+        f"{quote_html}{summary_html}{related_html}{analysis_html}"
         f'<div style="font-size:12px;margin-top:4px;">{meta}</div>'
         f"{tags_html}"
         f"</div>"
@@ -228,18 +230,62 @@ def _quote_line(item: Item) -> str:
     )
 
 
-def _brief_line(item: Item) -> str:
-    """一句总结：大模型产出标 AI，规则化降级标 摘要，不假装。"""
-    brief = (item.ai_brief or "").strip()
-    if not brief:
-        return ""
-    label = "AI" if item.ai_brief_from_model else "摘要"
+def _related_block(item: Item) -> str:
+    """多源印证：列出同一新闻在其它源头的报道；没有就如实标「单一来源」。"""
+    from .crossref import describe_related
+
+    related = list(item.related or [])
+    if not related:
+        if not item.related_searched:
+            return ""
+        return (
+            f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:4px;">'
+            f'<span style="display:inline-block;border:1px solid {BORDER};color:{NAVY_SOFT};'
+            f'border-radius:3px;padding:0 5px;margin-right:6px;font-size:11px;">单一来源</span>'
+            f"其它源与外部检索暂未见同一事件的报道</div>"
+        )
+
+    same = sum(1 for r in related if r.relation == "same_event")
+    head_label = f"多源 {same}" if same else "同标的"
+    rows: list[str] = []
+    for rel in related:
+        label = html.escape(describe_related(rel))
+        title = html.escape(rel.title)
+        if rel.url:
+            title = (
+                f'<a href="{html.escape(rel.url, quote=True)}" '
+                f'style="color:{NAVY};text-decoration:none;">{title}</a>'
+            )
+        when = f"{rel.published_at:%m-%d %H:%M}" if rel.published_at else ""
+        note = "" if rel.relation == "same_event" else "（同标的，待核对）"
+        rows.append(
+            f'<div style="margin-top:2px;">'
+            f'<span style="color:{NAVY_SOFT};">· {label}</span> {title}'
+            f'<span style="color:{NAVY_SOFT};font-size:11px;"> {when}{note}</span></div>'
+        )
     return (
-        f'<div style="font-size:13px;color:{NAVY};margin-top:4px;line-height:1.65;">'
+        f'<div style="font-size:12px;color:{NAVY};margin-top:4px;line-height:1.6;">'
+        f'<span style="display:inline-block;background:{ACCENT_WASH};color:{GREEN};'
+        f'border-radius:3px;padding:0 5px;margin-right:4px;font-size:11px;font-weight:700;">'
+        f"{head_label}</span>"
+        f'<span style="color:{NAVY_SOFT};font-size:11px;">同一新闻的其它源头</span>'
+        f"{''.join(rows)}</div>"
+    )
+
+
+def _analysis_block(item: Item) -> str:
+    """AI 分析：大模型产出标「AI 分析」，规则化降级标「分析」，不假装。"""
+    analysis = (item.ai_analysis or "").strip()
+    if not analysis:
+        return ""
+    label = "AI 分析" if item.ai_analysis_from_model else "分析"
+    return (
+        f'<div style="font-size:13px;color:{NAVY};margin-top:5px;line-height:1.7;'
+        f'background:{SURFACE_ALT};border-radius:5px;padding:6px 8px;">'
         f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
         f'border-radius:3px;padding:1px 6px;margin-right:6px;font-size:11px;font-weight:700;">'
         f"{label}</span>"
-        f"{html.escape(brief)}</div>"
+        f"{html.escape(analysis)}</div>"
     )
 
 
@@ -275,7 +321,11 @@ def _footer(
         lines.append(f"本轮未取到数据：{names}（已自动重试，下轮继续）")
     lines.append("时间校验：仅推送带可验证发布时间的条目，无时间戳或时间异常的一律丢弃")
     lines.append("现价为抓取时刻行情快照（东财优先，失败降级 Yahoo）；无对应标的则不展示")
-    lines.append("每条附一句总结：配置了 DeepSeek 则为 AI 生成，否则为规则化摘要，均不编造数据")
+    lines.append(
+        "多源印证：先在本轮十个源之间匹配同一事件，再检索 Google/Bing News 找不同源头的报道；"
+        "检索结果同样校验发布时间，找不到就如实标「单一来源」"
+    )
+    lines.append("每条附 AI 分析（事件要点 / 多源印证 / 关注点）：配置了 DeepSeek 则为 AI 生成，否则为规则化分析，均不编造数据")
     lines.append("内容由程序自动抓取整合，仅供参考，不构成投资建议")
 
     body = "".join(

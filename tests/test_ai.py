@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import MagicMock
 
-from octopus.ai import SYSTEM_PROMPT, NEWS_BRIEF_PROMPT, DEEPSEEK_API_URL, DeepSeekAI
+from octopus.ai import SYSTEM_PROMPT, NEWS_ANALYSIS_PROMPT, DEEPSEEK_API_URL, DeepSeekAI
 from octopus.http import FetchError
 
 
@@ -58,24 +58,35 @@ class TestDeepSeekAI(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("DeepSeek API 调用异常", msg)
 
-    def test_summarize_news_success(self):
+    def test_analyze_news_success(self):
         http = MagicMock()
         http.post_json.return_value = {
-            "choices": [{"message": {"content": "1. 宁德时代拟回购\n2. 嘉美包装封板"}}]
+            "choices": [{"message": {"content": "1. 宁德时代拟回购，证券时报报道一致。\n2. 嘉美包装封板，单一来源。"}}]
         }
         client = DeepSeekAI("sk-test", model="deepseek-v4-flash", http=http)
-        ok, text = client.summarize_news(
-            [(1, "宁德时代拟回购400亿", "公司公告"), (2, "嘉美包装封板", "")]
+        ok, text = client.analyze_news(
+            [
+                (1, "巨潮资讯", "宁德时代拟回购400亿", "公司公告", ["证券时报（Google News）：宁德时代披露回购（09-07 10:12）"]),
+                (2, "问财·同花顺", "嘉美包装封板", "", []),
+            ]
         )
         self.assertTrue(ok)
         self.assertIn("宁德时代拟回购", text)
         url, payload = http.post_json.call_args[0]
         self.assertEqual(url, DEEPSEEK_API_URL)
-        self.assertEqual(payload["messages"][0]["content"], NEWS_BRIEF_PROMPT)
-        self.assertIn("宁德时代拟回购400亿", payload["messages"][1]["content"])
+        self.assertEqual(payload["messages"][0]["content"], NEWS_ANALYSIS_PROMPT)
+        user = payload["messages"][1]["content"]
+        self.assertIn("宁德时代拟回购400亿", user)
+        self.assertIn("证券时报（Google News）：宁德时代披露回购", user)
+        self.assertIn("（无，目前仅此一个来源）", user)  # 单一来源要明说，不让模型脑补
 
-    def test_summarize_news_missing_key(self):
-        ok, msg = DeepSeekAI("").summarize_news([(1, "标题", "摘要")])
+    def test_news_prompt_forbids_overclaim(self):
+        self.assertIn("单一来源", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("严禁编造", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("不做买卖建议", NEWS_ANALYSIS_PROMPT)
+
+    def test_analyze_news_missing_key(self):
+        ok, msg = DeepSeekAI("").analyze_news([(1, "源", "标题", "摘要", [])])
         self.assertFalse(ok)
         self.assertIn("未配置 DeepSeek API Key", msg)
 

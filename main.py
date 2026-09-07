@@ -52,6 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", default=None, help="配置文件路径，默认 config.yml")
     p.add_argument("--sources", default="", help="只跑指定源，逗号分隔，如 iwencai,cninfo")
     p.add_argument("--verbose", "-v", action="store_true", help="输出调试日志")
+    p.add_argument("--crossref", default="",
+                   choices=["", "auto", "on", "off"],
+                   help="多源印证的外部新闻检索：auto（默认，连不上自动熔断）/ on / off（只做本轮跨源匹配）")
     # --- 手动主题分析推送 ------------------------------------------------
     p.add_argument("--manual", action="store_true",
                    help="手动模式：录入 AI 分析主题/内容并直接推送，跳过抓取")
@@ -118,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         config.supervision_days = args.supervision_days
     if args.market_source:
         config.factor_market_source = args.market_source.strip().lower()
+    if args.crossref:
+        config.crossref_mode = args.crossref.strip().lower()
     if args.sources:
         from octopus.sources import REGISTRY
 
@@ -196,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print_summary(report) -> None:
+    from octopus.crossref import describe_related
+
     print("\n" + "=" * 64)
     print(f"扫描时刻 {stamp(report.ref)}   新增 {report.total} 条")
     print("=" * 64)
@@ -211,9 +218,15 @@ def _print_summary(report) -> None:
             if item.last_price is not None:
                 chg = "" if item.price_change is None else f" {item.price_change:+.2f}%"
                 bits.append(f"    现价 {item.price_name or item.price_code} {item.last_price:.2f}{chg}")
-            if item.ai_brief:
-                tag = "AI" if item.ai_brief_from_model else "摘要"
-                bits.append(f"    {tag} {item.ai_brief}")
+            for rel in item.related:
+                when = f" {rel.published_at:%m-%d %H:%M}" if rel.published_at else ""
+                note = "" if rel.relation == "same_event" else "（同标的，待核对）"
+                bits.append(f"    多源 {describe_related(rel)}：{rel.title[:50]}{when}{note}")
+            if not item.related and item.related_searched:
+                bits.append("    多源 单一来源（其它源与外部检索未见同一事件）")
+            if item.ai_analysis:
+                tag = "AI分析" if item.ai_analysis_from_model else "分析"
+                bits.append(f"    {tag} {item.ai_analysis}")
             print("\n".join(bits))
     print()
 

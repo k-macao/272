@@ -101,6 +101,13 @@ def parse(value: object, *, ref: datetime | None = None) -> tuple[datetime | Non
             base = ref or now()
             return base - timedelta(**{key: amount}), TimeQuality.DERIVED, raw
 
+    # RSS pubDate 的 RFC 822 写法："Sun, 07 Sep 2026 02:10:00 GMT" / "+0800"
+    # （Bing News / Google News 检索结果全是这种格式，统一折算到东八区）
+    if _RFC822_HINT.search(raw):
+        dt = _parse_rfc822(raw)
+        if dt is not None:
+            return dt, TimeQuality.EXACT, raw
+
     text = _clean(raw)
 
     # 东财 "2026-07-27 09:30:01:817" 这种毫秒用冒号的畸形格式
@@ -124,6 +131,24 @@ def parse(value: object, *, ref: datetime | None = None) -> tuple[datetime | Non
 
 
 _CLEAN_PREFIX = re.compile(r"^(发布时间|时间|更新时间|发表于|于)[:：]?\s*")
+
+# RFC 822 的特征：英文月份缩写夹在日与年之间（"07 Sep 2026"）
+_RFC822_HINT = re.compile(r"\b\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\b")
+
+
+def _parse_rfc822(raw: str) -> datetime | None:
+    """解析 RSS/HTTP 常见的 RFC 822 时间；缺时区按 UTC 处理，统一转东八区。"""
+    from email.utils import parsedate_to_datetime
+
+    try:
+        dt = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(CN_TZ)
 
 
 def _clean(text: str) -> str:

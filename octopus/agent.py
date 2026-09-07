@@ -104,7 +104,7 @@ class Agent:
         newest = _newest(groups)
 
         if total:
-            self._enrich_news(groups)
+            self._enrich_news(groups, ref=ref)
 
         html = render_html(
             groups,
@@ -406,8 +406,10 @@ class Agent:
         return report
 
     # ------------------------------------------------------------------
-    def _enrich_news(self, groups: list[tuple[SourceResult, list[Item]]]) -> None:
-        """给每条情报补现价与一句总结。失败只记日志，不影响推送。"""
+    def _enrich_news(
+        self, groups: list[tuple[SourceResult, list[Item]]], *, ref: datetime | None = None
+    ) -> None:
+        """给每条情报补现价、找同一新闻的其它源头、写 AI 分析。失败只记日志，不影响推送。"""
         items = [item for _, bag in groups for item in bag]
         if not items:
             return
@@ -419,11 +421,19 @@ class Agent:
                 http=self.http,
                 api_key=self.config.deepseek_api_key,
                 model=self.config.deepseek_model,
+                crossref_mode=self.config.crossref_mode,
+                crossref_max_items=self.config.crossref_max_items,
+                crossref_timeout=self.config.crossref_timeout,
+                crossref_max_gap_hours=self.config.crossref_max_gap_hours,
+                ref=ref,
             )
             log.info(
-                "情报增强：%d 条中现价 %d，AI 总结 %d，规则摘要 %d",
+                "情报增强：%d 条中现价 %d，本轮跨源印证 %d，外部检索 %d 条/命中 %d 篇，AI 分析 %d，规则分析 %d",
                 stats.get("items", 0),
                 stats.get("quotes", 0),
+                stats.get("linked", 0),
+                stats.get("searched", 0),
+                stats.get("external_hits", 0),
                 stats.get("ai", 0),
                 stats.get("rule", 0),
             )

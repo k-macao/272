@@ -1,13 +1,17 @@
-"""情报条目增强：给每条新闻补上现价，再写一句总结。
+"""情报条目增强：给每条新闻补上现价、找同一新闻的不同源头，再写 AI 分析。
 
 流程（渲染推送前、不影响时间校验与去重）：
 
 1. 从 extra / 标题 / 摘要里提取 A 股或转债代码（宁可少提，不可臆造）
 2. 批量取现价：东财 ulist 优先，失败或漏报的代码再降级 Yahoo Finance
-3. 一句总结：配置了 DeepSeek 则按条生成；否则或调用失败时用规则化摘要，
-   并如实标注，绝不假装用了 AI
+3. 多源印证（crossref）：先在本轮十个源之间互相匹配同一事件，再对最值得
+   核实的若干条做外部新闻检索（Google/Bing News RSS，仅保留带可验证发布
+   时间且标题对得上的结果）
+4. AI 分析：配置了 DeepSeek 则把「本条 + 其它源头报道」交给模型，写
+   事件要点 / 多源印证 / 关注点；否则或调用失败时用规则化分析，并如实标注，
+   绝不假装用了 AI
 
-任何一步失败只让该条缺少现价/改用规则摘要，不会丢条目、不会拖垮整轮推送。
+任何一步失败只让该条缺少现价/印证/改用规则分析，不会丢条目、不会拖垮整轮推送。
 """
 
 from __future__ import annotations
@@ -46,7 +50,12 @@ INDEX_ALIASES: tuple[tuple[str, str, str], ...] = (
     ("科创50", "000688", "1.000688"),
 )
 
-_BANNED_BRIEF = ("买入", "卖出", "目标价", "立即建仓", "稳赚", "必涨", "马上买")
+_BANNED_ANALYSIS = ("买入", "卖出", "目标价", "立即建仓", "稳赚", "必涨", "马上买", "建议加仓", "建议减仓")
+#: 单一来源的条目，模型不得声称已获多方证实
+_OVERCLAIM = ("多方证实", "多家媒体证实", "多源证实", "已获证实", "多家权威媒体")
+ANALYSIS_LIMIT = 160
+AI_CHUNK_SIZE = 6
+AI_WORKERS = 3
 
 _NAME_INDEX: list[tuple[str, str]] | None = None
 _BOARD_NAMES: frozenset[str] | None = None
@@ -74,10 +83,18 @@ def enrich_news(
     http: Http | None = None,
     api_key: str = "",
     model: str = "deepseek-v4-flash",
+    crossref_mode: str = "auto",
+    crossref_max_items: int = 12,
+    crossref_timeout: float = 6.0,
+    crossref_max_gap_hours: float = 36.0,
+    ref=None,
 ) -> dict[str, int]:
-    """就地给条目补现价与一句总结。返回计数，便于日志。"""
+    """就地给条目补现价、多源印证与 AI 分析。返回计数，便于日志。"""
     bag = [it for it in items if it is not None]
-    stats = {"items": len(bag), "quotes": 0, "ai": 0, "rule": 0}
+    stats = {
+        "items": len(bag), "quotes": 0, "ai": 0, "rule": 0,
+        "linked": 0, "searched": 0, "external_hits": 0,
+    }
     if not bag:
         return stats
 
@@ -98,9 +115,33 @@ def enrich_news(
         if _attach_quote(item, tickers, quotes):
             stats["quotes"] += 1
 
-    _fill_briefs(bag, http=http, api_key=api_key, model=model)
-    stats["ai"] = sum(1 for it in bag if it.ai_brief_from_model)
-    stats["rule"] = sum(1 for it in bag if it.ai_brief and not it.ai_brief_from_model)
+    # 多源印证：先本轮跨源匹配（离线），再外部检索（在线、可关）
+    from . import crossref
+
+    try:
+        stats["linked"] = crossref.link_batch(bag)
+    except Exception as exc:  # noqa: BLE001 - 印证失败不影响推送
+        log.info("本轮跨源匹配失败（不影响推送）：%s", exc)
+    try:
+        search_stats = crossref.search_external(
+            bag,
+            http=http,
+            mode=crossref_mode,
+            max_items=crossref_max_items,
+            timeout=crossref_timeout,
+            max_gap_hours=crossref_max_gap_hours,
+            ref=ref,
+        )
+        stats["searched"] = search_stats.searched
+        stats["external_hits"] = search_stats.hits
+        if search_stats.disabled:
+            log.info("外部新闻检索本轮熔断：%s", "、".join(search_stats.disabled))
+    except Exception as exc:  # noqa: BLE001
+        log.info("外部新闻检索失败（不影响推送）：%s", exc)
+
+    _fill_analysis(bag, http=http, api_key=api_key, model=model)
+    stats["ai"] = sum(1 for it in bag if it.ai_analysis_from_model)
+    stats["rule"] = sum(1 for it in bag if it.ai_analysis and not it.ai_analysis_from_model)
     return stats
 
 
@@ -347,16 +388,41 @@ def _num(value: object) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# 一句总结
+# AI 分析（DeepSeek）/ 规则化分析（降级）
 # ---------------------------------------------------------------------------
-def rule_brief(item: Item) -> str:
-    """规则化一句话：优先用源摘要的首句，否则压缩标题。"""
-    text = (item.summary or "").strip()
-    if text:
-        clipped = clip_brief(text)
-        if clipped:
-            return clipped
-    return clip_brief(item.title or "")
+def rule_analysis(item: Item) -> str:
+    """规则化分析：多源印证情况 + 关注点。
+
+    不调用大模型，只把已知事实组织成一段话，卡片上标「分析」而非「AI」。
+    标题与源摘要已经在卡片上，这里不再复述，只补「其它源头怎么说」和「该核对什么」。
+    """
+    from . import crossref
+
+    corroboration = crossref.corroboration_summary(item)
+    focus = _rule_focus(item)
+    return "".join(p for p in (corroboration + "。", focus) if p)
+
+
+def _rule_focus(item: Item) -> str:
+    from .crossref import event_tags
+
+    tags = set(event_tags(f"{item.title} {item.summary}"))
+    kind = str((item.extra or {}).get("kind") or "")
+    if tags & {"监管", "问询", "风险警示"}:
+        return "关注监管口径与公司后续回复公告。"
+    if tags & {"回购", "增持", "减持", "分红", "再融资", "并购重组", "停复牌", "人事", "诉讼"}:
+        return "以交易所披露的公告原文为准，留意后续进展公告。"
+    if tags & {"业绩", "订单"}:
+        return "关注定期报告与公告口径是否一致。"
+    if tags & {"宏观数据", "货币政策"}:
+        return "以统计局/央行正式发布口径为准。"
+    if tags & {"涨停", "跌停", "异动", "拉升", "回撤"} or kind in ("盘中异动", "涨停", "快讯"):
+        return "盘中信号时效性强，留意是否有对应公告或消息面解释。"
+    if tags & {"转债"}:
+        return "留意转债条款公告与正股走势的对应关系。"
+    if tags & {"评级"} or kind in ("研报", "投研", "机构预期", "宏观研报", "行业研报"):
+        return "研报观点仅代表发布机构，留意其数据口径与假设。"
+    return "留意后续是否有官方渠道的进一步披露。"
 
 
 def clip_brief(text: str, limit: int = 48) -> str:
@@ -373,59 +439,105 @@ def clip_brief(text: str, limit: int = 48) -> str:
     return text
 
 
-def parse_news_briefs(text: str) -> dict[int, str]:
-    """解析「1. xxx」编号列表。容错 1、/ 1: / 【1】 等写法。"""
+def clip_analysis(text: str, limit: int = ANALYSIS_LIMIT) -> str:
+    """整理模型输出的一段分析：合并空白、去掉编号残留，超长在句号处截断。"""
+    text = _WS.sub(" ", (text or "").replace("\n", " ")).strip()
+    text = text.strip("\"'“”")
+    text = re.sub(r"^(?:分析|AI分析|AI 分析)[:：]\s*", "", text)
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    for sep in ("。", "；", ";", "！", "？"):
+        idx = cut.rfind(sep)
+        if idx >= limit // 2:
+            return cut[: idx + 1]
+    return cut.rstrip("，,;；、 ") + "…"
+
+
+def parse_news_analyses(text: str) -> dict[int, str]:
+    """解析「1. xxx」编号列表。容错 1、/ 1: / 【1】 等写法，且允许一条分析跨多行。"""
     line_re = re.compile(
-        r"^\s*(?:[#\-*]+\s*)?(?:【\s*)?(\d{1,3})\s*(?:】|[.．、:：)）])\s*(.+?)\s*$"
+        r"^\s*(?:[#\-*]+\s*)?(?:【\s*)?(\d{1,3})\s*(?:】|[.．、:：)）])\s*(.*?)\s*$"
     )
-    out: dict[int, str] = {}
+    out: dict[int, list[str]] = {}
+    current: int | None = None
     for raw in (text or "").splitlines():
-        match = line_re.match(raw.strip())
-        if not match:
+        line = raw.strip()
+        if not line:
             continue
-        brief = clip_brief(match.group(2))
-        if brief:
-            out[int(match.group(1))] = brief
-    return out
+        match = line_re.match(line)
+        if match:
+            current = int(match.group(1))
+            out.setdefault(current, [])
+            if match.group(2):
+                out[current].append(match.group(2))
+            continue
+        if current is not None:
+            out[current].append(line)
+    result: dict[int, str] = {}
+    for num, parts in out.items():
+        joined = clip_analysis(" ".join(parts))
+        if joined:
+            result[num] = joined
+    return result
 
 
-def _fill_briefs(
+def _fill_analysis(
     items: list[Item],
     *,
     http: Http | None,
     api_key: str,
     model: str,
 ) -> None:
+    from . import crossref
+
     for item in items:
-        if not item.ai_brief:
-            item.ai_brief = rule_brief(item)
-            item.ai_brief_from_model = False
+        if not item.ai_analysis:
+            item.ai_analysis = rule_analysis(item)
+            item.ai_analysis_from_model = False
 
     if not (api_key or "").strip() or http is None:
         return
 
+    from concurrent.futures import ThreadPoolExecutor
+
     from .ai import DeepSeekAI
 
     client = DeepSeekAI(api_key, model=model or "deepseek-v4-flash", http=http)
-    chunk_size = 15
-    for start in range(0, len(items), chunk_size):
-        chunk = items[start : start + chunk_size]
-        entries = [
-            (i + 1, it.title, it.summary)
-            for i, it in enumerate(chunk)
-        ]
+    # 每条现在带着「其它源头报道」进 prompt，单次输入/输出都比以前的一句总结长，
+    # 所以块切小一点；块与块之间并发，整体耗时不比以前差。
+    chunk_size = AI_CHUNK_SIZE
+    chunks = [items[start : start + chunk_size] for start in range(0, len(items), chunk_size)]
+
+    def run_chunk(chunk: list[Item]) -> None:
+        entries = []
+        for i, it in enumerate(chunk):
+            others = []
+            for rel in it.related[:4]:
+                when = f"（{rel.published_at:%m-%d %H:%M}）" if rel.published_at else ""
+                flag = "" if rel.relation == "same_event" else "[同标的，未必同一事件]"
+                others.append(f"{crossref.describe_related(rel)}：{rel.title}{when}{flag}")
+            entries.append((i + 1, it.source_label, it.title, it.summary, others))
         try:
-            ok, text = client.summarize_news(entries)
+            ok, text = client.analyze_news(entries)
         except Exception as exc:  # noqa: BLE001
-            log.info("AI 一句总结调用失败，保留规则化摘要：%s", exc)
-            continue
+            log.info("AI 分析调用失败，保留规则化分析：%s", exc)
+            return
         if not ok:
-            log.info("AI 一句总结未成功：%s", text)
-            continue
-        mapping = parse_news_briefs(text)
+            log.info("AI 分析未成功：%s", text)
+            return
+        mapping = parse_news_analyses(text)
         for i, item in enumerate(chunk):
-            brief = mapping.get(i + 1, "")
-            if not brief or any(w in brief for w in _BANNED_BRIEF):
+            analysis = mapping.get(i + 1, "")
+            if not analysis or any(w in analysis for w in _BANNED_ANALYSIS):
                 continue
-            item.ai_brief = clip_brief(brief)
-            item.ai_brief_from_model = True
+            if not item.related and any(w in analysis for w in _OVERCLAIM):
+                continue  # 单一来源却声称多方证实 —— 拒收
+            item.ai_analysis = analysis
+            item.ai_analysis_from_model = True
+
+    if len(chunks) == 1:
+        run_chunk(chunks[0])
+        return
+    with ThreadPoolExecutor(max_workers=min(AI_WORKERS, len(chunks))) as pool:
+        list(pool.map(run_chunk, chunks))
