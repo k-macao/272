@@ -14,6 +14,7 @@ from octopus.agent import Agent
 from octopus.config import Config
 from octopus.models import Item, TimeQuality
 from octopus.notify import PushPlus
+from octopus.render import PUSH_TITLE
 from octopus.sources import REGISTRY
 from octopus.sources.base import Source
 from octopus.timeutil import CN_TZ, in_quiet_hours
@@ -178,7 +179,7 @@ class TestAgentFlow(AgentTestCase):
         REGISTRY["a"] = make_source("a", "源A", [])
         report = self._agent(self._config(push_when_empty=True)).run_once(ref=REF)
         self.assertTrue(report.pushed)
-        self.assertIn("本轮无新增", report.title)
+        self.assertEqual(report.title, PUSH_TITLE)
 
     def test_failed_push_does_not_mark_items_seen(self):
         """推送失败时不能记账，否则内容永久丢失。"""

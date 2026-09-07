@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import octopus.agent as agent_mod
 from octopus.agent import Agent
 from octopus.config import Config
-from octopus.render import render_manual, render_manual_title
+from octopus.render import PUSH_TITLE, render_manual, render_manual_title
 from octopus.timeutil import CN_TZ
 
 REF = datetime(2026, 7, 27, 10, 30, 0, tzinfo=CN_TZ)
@@ -63,13 +63,13 @@ class TestRenderManual(unittest.TestCase):
 
 class TestRenderManualTitle(unittest.TestCase):
     def test_title_with_topic(self):
-        self.assertEqual(render_manual_title("机器人板块分析", REF), "章鱼 AI 全景分析")
+        self.assertEqual(render_manual_title("机器人板块分析", REF), PUSH_TITLE)
 
     def test_title_without_topic(self):
-        self.assertEqual(render_manual_title("", REF), "章鱼 AI 全景分析")
+        self.assertEqual(render_manual_title("", REF), PUSH_TITLE)
 
     def test_title_ignores_long_topic(self):
-        self.assertEqual(render_manual_title("很" * 30, REF), "章鱼 AI 全景分析")
+        self.assertEqual(render_manual_title("很" * 30, REF), PUSH_TITLE)
 
 
 class AgentPushTestCase(unittest.TestCase):
@@ -107,7 +107,7 @@ class TestAgentManualPush(AgentPushTestCase):
         self.assertEqual(report.groups, [])
         self.assertEqual(len(RecordingPush.sent), 1)
         title, html = RecordingPush.sent[0]
-        self.assertEqual(title, "章鱼 AI 全景分析")
+        self.assertEqual(title, PUSH_TITLE)
         self.assertIn("机器人板块", html)
         self.assertIn("第一段。", html)
 

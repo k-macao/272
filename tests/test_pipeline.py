@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from octopus.models import Item, SourceResult, TimeQuality
-from octopus.render import render_html, render_title
+from octopus.render import PUSH_TITLE, render_html, render_title
 from octopus.sources.base import Source
 from octopus.state import SeenStore
 from octopus.timeutil import CN_TZ
@@ -222,16 +222,17 @@ class TestRender(unittest.TestCase):
         self.assertIn("坏源", html)
 
     def test_title_with_items(self):
+        """全部推送标题统一为固定品牌标题，不再拼条数/时间/头条。"""
         title = render_title(7, REF, item("长鑫科技上市首日大涨", 3))
-        self.assertIn("7条", title)
-        self.assertIn("07-27 10:30", title)
+        self.assertEqual(title, PUSH_TITLE)
+        self.assertEqual(title, "章鱼 AI · 全景分析（实时事件因子）")
 
     def test_title_when_empty(self):
-        self.assertIn("本轮无新增", render_title(0, REF, None))
+        self.assertEqual(render_title(0, REF, None), PUSH_TITLE)
 
-    def test_title_truncates_long_headline(self):
+    def test_title_ignores_long_headline(self):
         long_item = item("这是一条非常非常长的新闻标题" * 5, 1)
-        self.assertLessEqual(len(render_title(1, REF, long_item)), 60)
+        self.assertEqual(render_title(1, REF, long_item), PUSH_TITLE)
 
     def test_html_renders_price_and_brief(self):
         result = SourceResult(source="demo", source_label="示例源")
