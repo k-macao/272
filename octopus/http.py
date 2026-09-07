@@ -55,12 +55,19 @@ class Http:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         encoding: str | None = None,
+        timeout: float | None = None,
+        retries: int | None = None,
     ) -> requests.Response:
+        """GET 一次。``timeout`` / ``retries`` 可按调用覆盖实例默认值 ——
+        多源印证的外部检索属于"锦上添花"，用更短的超时、不重试，
+        不能拖慢主流程。"""
+        timeout = self.timeout if timeout is None else timeout
+        retries = self.retries if retries is None else max(0, int(retries))
         last: Exception | None = None
-        for attempt in range(self.retries + 1):
+        for attempt in range(retries + 1):
             try:
                 resp = self.session.get(
-                    url, params=params, headers=headers, timeout=self.timeout
+                    url, params=params, headers=headers, timeout=timeout
                 )
                 if resp.status_code >= 500:
                     raise FetchError(f"HTTP {resp.status_code}")
@@ -72,7 +79,7 @@ class Http:
                 return resp
             except Exception as exc:  # noqa: BLE001 - 统一收敛为 FetchError
                 last = exc
-                if attempt < self.retries:
+                if attempt < retries:
                     delay = self.backoff ** attempt + random.uniform(0, 0.4)
                     log.debug("GET %s 第%d次失败(%s)，%.1fs 后重试", url, attempt + 1, exc, delay)
                     time.sleep(delay)
@@ -86,8 +93,10 @@ class Http:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         strip_jsonp: bool = False,
+        timeout: float | None = None,
+        retries: int | None = None,
     ) -> Any:
-        resp = self.get(url, params=params, headers=headers)
+        resp = self.get(url, params=params, headers=headers, timeout=timeout, retries=retries)
         text = resp.text.strip()
         if strip_jsonp:
             text = _unwrap_jsonp(text)
@@ -103,8 +112,13 @@ class Http:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         encoding: str | None = None,
+        timeout: float | None = None,
+        retries: int | None = None,
     ) -> str:
-        return self.get(url, params=params, headers=headers, encoding=encoding).text
+        return self.get(
+            url, params=params, headers=headers, encoding=encoding,
+            timeout=timeout, retries=retries,
+        ).text
 
     def post_form(
         self,

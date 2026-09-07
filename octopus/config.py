@@ -37,6 +37,15 @@ DEFAULTS: dict[str, Any] = {
     # 主题因子分析的行情数据源：eastmoney（国内东财）/ yahoo（国外免费源，
     # Yahoo Finance，免注册无 Key）/ auto（东财优先，任一环节失败自动降级 Yahoo）
     "factor_market_source": "auto",
+    # --- 多源印证（定时情报每条新闻找不同源头）---------------------------
+    # crossref_mode: auto（默认，外部检索连不上自动熔断）/ on（强制每条都试）/ off（只做本轮跨源匹配，不联网检索）
+    "crossref_mode": "auto",
+    # 每轮最多对多少条做外部新闻检索（每条 1-2 个 RSS 请求，控制耗时）
+    "crossref_max_items": 12,
+    # 单次外部检索超时（秒），不重试
+    "crossref_timeout": 6,
+    # 外部报道与原条目的发布时间最多相差多少小时，超出视为不同事件
+    "crossref_max_gap_hours": 36,
 }
 
 
@@ -65,6 +74,10 @@ class Config:
     factor_kline_limit: int = 250
     supervision_days: int = 30
     factor_market_source: str = "auto"
+    crossref_mode: str = "auto"
+    crossref_max_items: int = 12
+    crossref_timeout: float = 6.0
+    crossref_max_gap_hours: float = 36.0
     sources: dict[str, dict] = field(default_factory=dict)
     disabled_sources: list[str] = field(default_factory=list)
 
@@ -90,6 +103,10 @@ class Config:
             "factor_kline_limit": ("OCTOPUS_FACTOR_KLINE_LIMIT", int),
             "supervision_days": ("OCTOPUS_SUPERVISION_DAYS", int),
             "factor_market_source": ("OCTOPUS_FACTOR_MARKET_SOURCE", str),
+            "crossref_mode": ("OCTOPUS_CROSSREF_MODE", str),
+            "crossref_max_items": ("OCTOPUS_CROSSREF_MAX_ITEMS", int),
+            "crossref_timeout": ("OCTOPUS_CROSSREF_TIMEOUT", float),
+            "crossref_max_gap_hours": ("OCTOPUS_CROSSREF_MAX_GAP_HOURS", float),
         }
         for key, (env, caster) in env_map.items():
             raw = os.getenv(env)
@@ -143,6 +160,10 @@ class Config:
             factor_kline_limit=int(data.get("factor_kline_limit", 250) or 250),
             supervision_days=int(data.get("supervision_days", 30) or 30),
             factor_market_source=str(data.get("factor_market_source", "auto") or "auto").strip().lower(),
+            crossref_mode=str(data.get("crossref_mode", "auto") or "auto").strip().lower(),
+            crossref_max_items=int(data.get("crossref_max_items", 12) or 0),
+            crossref_timeout=float(data.get("crossref_timeout", 6) or 6),
+            crossref_max_gap_hours=float(data.get("crossref_max_gap_hours", 36) or 36),
             sources=dict(data.get("sources") or {}),
             disabled_sources=_as_list(data.get("disabled_sources")),
         )

@@ -1,4 +1,4 @@
-"""情报增强：现价提取 / 行情降级 / 一句总结（全程离线）。"""
+"""情报增强：现价提取 / 行情降级 / 多源印证 / AI 分析（全程离线）。"""
 
 from __future__ import annotations
 
@@ -13,16 +13,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from octopus.enrich import (
     Quote,
     Ticker,
+    clip_analysis,
     clip_brief,
     code_to_secid,
     enrich_news,
     extract_tickers,
     fetch_quotes,
-    parse_news_briefs,
-    rule_brief,
+    parse_news_analyses,
+    rule_analysis,
 )
 from octopus.http import FetchError
-from octopus.models import Item, SourceResult, TimeQuality
+from octopus.models import Item, RelatedNews, SourceResult, TimeQuality
 from octopus.render import render_html
 from octopus.timeutil import CN_TZ
 
@@ -57,6 +58,10 @@ class FakeHttp:
         raise FetchError(f"no fixture for {url}")
 
     def post_json(self, url, payload, **kwargs):
+        raise FetchError("offline")
+
+    def text(self, url, **kwargs):
+        self.calls.append(url)
         raise FetchError("offline")
 
 
@@ -174,65 +179,140 @@ class TestQuotes(unittest.TestCase):
         self.assertEqual(stats["quotes"], 1)
 
 
-class TestBriefs(unittest.TestCase):
-    def test_rule_brief_prefers_summary(self):
+class TestAnalysis(unittest.TestCase):
+    def test_rule_analysis_does_not_restate_title_or_summary(self):
+        """标题/摘要已在卡片上，规则化分析只补印证情况与关注点。"""
         item = _item("很长的标题" * 5, summary="涨幅 9.98%，换手 1.57%，封单 3.76亿")
-        self.assertEqual(rule_brief(item), "涨幅 9.98%，换手 1.57%，封单 3.76亿")
+        text = rule_analysis(item)
+        self.assertNotIn("涨幅 9.98%", text)
+        self.assertNotIn("很长的标题", text)
+        self.assertIn("单一来源", text)
+        self.assertTrue(text.endswith("。"))
 
-    def test_rule_brief_clips_title(self):
-        item = _item("这是一条非常非常长的新闻标题需要被裁成一句摘要并且还要再长一点才够超过四十八个字的限制所以再补几个字")
-        brief = rule_brief(item)
-        self.assertLessEqual(len(brief), 49)
-        self.assertTrue(brief.endswith("…"))
+    def test_rule_analysis_mentions_other_sources(self):
+        item = _item("宁德时代(300750)拟回购")
+        item.related.append(RelatedNews(source_label="证券之星", title="宁德时代回购公告", relation="same_event"))
+        item.related.append(RelatedNews(source_label="证券时报", title="宁德时代披露回购", relation="same_event", via="google"))
+        text = rule_analysis(item)
+        self.assertIn("2 个源头报道同一事件", text)
+        self.assertIn("证券之星", text)
+        self.assertIn("证券时报（Google News）", text)
+        self.assertIn("公告原文", text)
+
+    def test_rule_analysis_distinguishes_searched_and_not(self):
+        item = _item("某公司发布公告")
+        self.assertIn("未做外部检索", rule_analysis(item))
+        item.related_searched = True
+        self.assertIn("外部检索均未见", rule_analysis(item))
+
+    def test_rule_focus_by_event(self):
+        self.assertIn("监管口径", rule_analysis(_item("某公司收到问询函")))
+        self.assertIn("统计局", rule_analysis(_item("7月 CPI 同比上涨0.5%")))
+        self.assertIn("盘中信号", rule_analysis(_item("某股快速拉升")))
 
     def test_parse_numbered_variants(self):
         text = "1. 宁德时代拟回购\n2、嘉美包装首板封死\n【3】北向资金净流入\n4: 创业板指走强"
-        mapping = parse_news_briefs(text)
+        mapping = parse_news_analyses(text)
         self.assertEqual(mapping[1], "宁德时代拟回购")
         self.assertEqual(mapping[2], "嘉美包装首板封死")
         self.assertEqual(mapping[3], "北向资金净流入")
         self.assertEqual(mapping[4], "创业板指走强")
 
-    def test_clip_takes_first_sentence(self):
+    def test_parse_multiline_entry(self):
+        text = "1. 事件要点：公司拟回购。\n多源印证：证券时报报道一致。\n关注点：公告原文。\n2. 第二条。"
+        mapping = parse_news_analyses(text)
+        self.assertIn("多源印证：证券时报报道一致。", mapping[1])
+        self.assertEqual(mapping[2], "第二条。")
+
+    def test_clip_analysis_cuts_at_sentence(self):
+        long = "第一句话。" * 40
+        clipped = clip_analysis(long, limit=60)
+        self.assertLessEqual(len(clipped), 60)
+        self.assertTrue(clipped.endswith("。"))
+
+    def test_clip_brief_takes_first_sentence(self):
         self.assertEqual(clip_brief("先说这句。后面不要。"), "先说这句")
 
-    def test_enrich_without_key_uses_rule_brief(self):
+    def test_enrich_without_key_uses_rule_analysis(self):
         item = _item("统计局发布 PMI", summary="官方制造业 PMI 为 50.2。")
         stats = enrich_news([item], http=None, api_key="")
-        self.assertEqual(item.ai_brief, "官方制造业 PMI 为 50.2")
-        self.assertFalse(item.ai_brief_from_model)
+        self.assertIn("单一来源", item.ai_analysis)
+        self.assertIn("统计局", item.ai_analysis)
+        self.assertFalse(item.ai_analysis_from_model)
         self.assertEqual(stats["rule"], 1)
         self.assertEqual(stats["ai"], 0)
+        self.assertEqual(stats["searched"], 0)  # http=None 不联网
 
-    def test_ai_briefs_overwrite_rule(self):
+    def test_ai_analysis_overwrites_rule(self):
         item = _item("宁德时代拟回购400亿", summary="公司公告回购。")
         http = MagicMock()
         http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
         http.post_json.return_value = {
-            "choices": [{"message": {"content": "1. 宁德时代公告大规模回购，关注后续进度。"}}]
+            "choices": [{"message": {"content": "1. 事件要点：公司公告大规模回购。多源印证：目前仅见单一来源，待其它渠道确认。关注点：留意回购进展公告。"}}]
         }
-        stats = enrich_news([item], http=http, api_key="sk-test")
-        self.assertTrue(item.ai_brief_from_model)
-        self.assertIn("回购", item.ai_brief)
+        stats = enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertTrue(item.ai_analysis_from_model)
+        self.assertIn("回购", item.ai_analysis)
+        self.assertIn("单一来源", item.ai_analysis)
         self.assertEqual(stats["ai"], 1)
+
+    def test_ai_prompt_carries_other_sources(self):
+        """模型收到的不只是标题：同一新闻的其它源头报道也要进 prompt。"""
+        item = _item("宁德时代(300750)拟回购")
+        item.related.append(RelatedNews(source_label="证券之星", title="宁德时代公告回购", relation="same_event"))
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+        http.post_json.return_value = {"choices": [{"message": {"content": "1. 分析文本。"}}]}
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        _, payload = http.post_json.call_args[0]
+        user = payload["messages"][1]["content"]
+        self.assertIn("其它源头报道", user)
+        self.assertIn("证券之星：宁德时代公告回购", user)
 
     def test_ai_buy_recommendation_rejected(self):
         item = _item("某股异动")
         http = MagicMock()
         http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
         http.post_json.return_value = {
             "choices": [{"message": {"content": "1. 建议立即买入，稳赚不赔。"}}]
         }
-        enrich_news([item], http=http, api_key="sk-test")
-        self.assertFalse(item.ai_brief_from_model)
-        self.assertEqual(item.ai_brief, "某股异动")
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertFalse(item.ai_analysis_from_model)
+        self.assertNotIn("买入", item.ai_analysis)
+        self.assertIn("单一来源", item.ai_analysis)
+
+    def test_ai_overclaim_on_single_source_rejected(self):
+        """没有任何其它源头，模型却说「已获多方证实」—— 拒收，回退规则化分析。"""
+        item = _item("某公司拟回购")
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+        http.post_json.return_value = {
+            "choices": [{"message": {"content": "1. 该消息已获多方证实，公司拟回购。"}}]
+        }
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertFalse(item.ai_analysis_from_model)
 
     def test_quote_failure_does_not_drop_item(self):
         item = _item("宁德时代(300750)拟回购")
         stats = enrich_news([item], http=FakeHttp(json_map={"ulist": FetchError("boom")}))
         self.assertEqual(item.title, "宁德时代(300750)拟回购")
-        self.assertTrue(item.ai_brief)
+        self.assertTrue(item.ai_analysis)
         self.assertEqual(stats["items"], 1)
+
+    def test_external_search_failure_does_not_drop_item(self):
+        """外部检索全挂：条目仍在，标记为已检索、单一来源。"""
+        item = _item("宁德时代(300750)拟回购")
+        http = FakeHttp(json_map={"ulist": {"data": {"diff": []}}})
+        stats = enrich_news([item], http=http, api_key="", crossref_mode="on")
+        self.assertTrue(item.related_searched)
+        self.assertEqual(item.related, [])
+        self.assertEqual(stats["external_hits"], 0)
+        self.assertIn("单一来源", item.ai_analysis)
+        self.assertTrue(any("news.google.com" in c or "bing.com" in c for c in http.calls))
 
 
 class TestRenderNewsEnrichment(unittest.TestCase):
@@ -250,28 +330,59 @@ class TestRenderNewsEnrichment(unittest.TestCase):
         item.price_change = 2.31
         item.price_name = "宁德时代"
         item.price_code = "300750"
-        item.ai_brief = "公司拟斥资回购，关注进度。"
-        item.ai_brief_from_model = True
+        item.ai_analysis = "公司拟斥资回购，另有证券时报报道一致，关注进度。"
+        item.ai_analysis_from_model = True
         html = self._html(item)
         self.assertIn(">现价</span>", html)
         self.assertIn("188.50", html)
         self.assertIn("+2.31%", html)
-        self.assertIn(">AI</span>", html)
-        self.assertIn("公司拟斥资回购，关注进度。", html)
+        self.assertIn(">AI 分析</span>", html)
+        self.assertIn("公司拟斥资回购，另有证券时报报道一致，关注进度。", html)
 
     def test_missing_price_omitted(self):
         item = _item("统计局发布数据")
-        item.ai_brief = "官方数据发布。"
+        item.ai_analysis = "官方数据发布。"
         html = self._html(item)
         self.assertNotIn(">现价</span>", html)
-        self.assertIn(">摘要</span>", html)
+        self.assertIn(">分析</span>", html)
+        self.assertNotIn(">AI 分析</span>", html)  # 规则化分析不假装是 AI
 
-    def test_brief_is_escaped(self):
+    def test_related_sources_rendered(self):
+        item = _item("宁德时代(300750)拟回购")
+        item.related.append(
+            RelatedNews(
+                source_label="证券时报", title="宁德时代披露回购进展",
+                url="https://example.com/stcn/1", published_at=REF - timedelta(minutes=9),
+                relation="same_event", via="google",
+            )
+        )
+        item.related.append(
+            RelatedNews(source_label="证券之星", title="宁德时代盘中异动", relation="same_subject")
+        )
+        item.ai_analysis = "分析。"
+        html = self._html(item)
+        self.assertIn(">多源 1</span>", html)
+        self.assertIn("证券时报（Google News）", html)
+        self.assertIn('href="https://example.com/stcn/1"', html)
+        self.assertIn("宁德时代披露回购进展", html)
+        self.assertIn("（同标的，待核对）", html)
+
+    def test_single_source_badge_only_after_search(self):
+        item = _item("某公司公告")
+        item.ai_analysis = "分析。"
+        self.assertNotIn(">单一来源</span>", self._html(item))
+        item.related_searched = True
+        self.assertIn(">单一来源</span>", self._html(item))
+
+    def test_analysis_and_related_are_escaped(self):
         item = _item("标题")
-        item.ai_brief = "<script>alert(1)</script>"
+        item.ai_analysis = "<script>alert(1)</script>"
+        item.related.append(RelatedNews(source_label="<b>x</b>", title="<img src=x onerror=1>", url="javascript:alert(1)\"", relation="same_event"))
         html = self._html(item)
         self.assertNotIn("<script>", html)
         self.assertIn("&lt;script&gt;", html)
+        self.assertNotIn("<img", html)
+        self.assertNotIn("<b>x</b>", html)
 
     def test_down_move_uses_green(self):
         item = _item("某股跳水")

@@ -1,4 +1,4 @@
-"""DeepSeek 大模型接口 —— 用于手动主题推送时对输入内容进行深度提炼、分类和摘要.
+"""DeepSeek 大模型接口 —— 手动主题推送的内容提炼、主题因子报告解读、定时情报的逐条 AI 分析.
 
 直接支持 DeepSeek OpenAI 兼容接口（https://api.deepseek.com/chat/completions），
 使用 Authorization: Bearer <API_KEY> 鉴权，支持 deepseek-v4-flash 等主流 DeepSeek 模型。
@@ -22,15 +22,21 @@ SYSTEM_PROMPT = """你是一位专业的金融及产业研究分析师和精炼�
 【核心结论】：用 1-2 句简明扼要的话概括最关键的结论或逻辑
 【关键信息提炼】：精炼列举 3-5 点最重要的要点、数据或细节"""
 
-# 定时情报：给每条新闻写一句总结。模型只看到标题与摘要，接触不到行情数字，
-# 也就无从编造现价；现价由 enrich 层单独拉取。
-NEWS_BRIEF_PROMPT = """你是章鱼 AI 的情报摘要引擎。对用户给出的每条 A 股情报，各写一句不超过 40 字的中性总结。
+# 定时情报：给每条新闻写 AI 分析。模型拿到的是「本条 + 同一新闻在其它源头的
+# 报道」，先比对多源再评论；接触不到行情数字，也就无从编造现价（现价由 enrich
+# 层单独拉取）。
+NEWS_ANALYSIS_PROMPT = """你是章鱼 AI 的情报分析引擎。用户会给你若干条 A 股情报，每条附有「同一新闻在其它源头的报道」（可能为空）。
+请对每条各写一段 60-120 字的中性分析，按顺序覆盖三点：
+① 事件要点：这条消息说了什么（只复述已给出的事实）；
+② 多源印证：其它源头的报道与本条是否一致、有无补充信息或口径差异；若「其它源头」为空，必须写明"目前仅见单一来源，待其它渠道确认"；
+③ 关注点：后续值得核对的公开信息（如公告原文、监管口径、数据发布），不做方向判断。
 硬性要求：
-1. 只能使用该条标题与摘要中已经出现的事实，严禁编造价格、涨跌幅、机构观点或未出现的数据。
-2. 不做买卖建议、不给目标价、不承诺收益、不用「稳赚/必涨」这类绝对化措辞。
-3. 按编号逐行输出，格式严格为：
-1. <一句话>
-2. <一句话>
+1. 只能使用给出的标题、摘要与其它源头报道中出现的事实，严禁编造价格、涨跌幅、机构观点、政策原文或未出现的数据；
+2. 不做买卖建议、不给目标价、不承诺收益，不用「稳赚/必涨/建议买入」这类措辞；
+3. 不得把「其它源头」为空的条目写成已获多方证实；
+4. 按编号逐条输出，每条一段、不换行，格式严格为：
+1. <分析>
+2. <分析>
 不要输出其它内容、不要写开场白。"""
 
 # 主题因子分析：把「事实清单」交给大模型解读，模型只负责组织语言与归因，
@@ -111,12 +117,14 @@ class DeepSeekAI:
         return self._chat(system, user_prompt, temperature=0.4, max_tokens=2000)
 
     # ------------------------------------------------------------------
-    def summarize_news(
-        self, entries: list[tuple[int, str, str]]
+    def analyze_news(
+        self, entries: list[tuple[int, str, str, str, list[str]]]
     ) -> tuple[bool, str]:
-        """按条生成一句总结。
+        """按条生成 AI 分析（事件要点 + 多源印证 + 关注点）。
 
-        entries: [(序号, 标题, 摘要), ...]，序号从 1 起，与输出编号对应。
+        entries: [(序号, 来源, 标题, 摘要, [其它源头报道...]), ...]，
+        序号从 1 起，与输出编号对应；「其它源头报道」每项形如
+        「证券时报：宁德时代披露回购进展（09-07 10:12）」，为空表示单一来源。
         返回 (ok, 模型原文)；调用方负责按编号解析。失败时第二项为错误信息。
         """
         if not self.api_key:
@@ -125,15 +133,21 @@ class DeepSeekAI:
             return True, ""
 
         lines: list[str] = []
-        for num, title, summary in entries:
-            piece = f"{num}. 标题：{(title or '').strip()[:80]}"
+        for num, source, title, summary, others in entries:
+            piece = f"{num}. 来源：{(source or '').strip()[:20]}\n   标题：{(title or '').strip()[:80]}"
             digest = (summary or "").strip()
             if digest:
-                piece += f"\n   摘要：{digest[:120]}"
+                piece += f"\n   摘要：{digest[:160]}"
+            if others:
+                piece += "\n   其它源头报道："
+                for other in others[:4]:
+                    piece += f"\n     - {str(other).strip()[:110]}"
+            else:
+                piece += "\n   其它源头报道：（无，目前仅此一个来源）"
             lines.append(piece)
-        user_prompt = "请为下列情报各写一句总结：\n\n" + "\n".join(lines)
+        user_prompt = "请为下列情报各写一段分析：\n\n" + "\n".join(lines)
         return self._chat(
-            NEWS_BRIEF_PROMPT, user_prompt, temperature=0.2, max_tokens=800
+            NEWS_ANALYSIS_PROMPT, user_prompt, temperature=0.2, max_tokens=1500
         )
 
     # ------------------------------------------------------------------

@@ -55,10 +55,24 @@ pushplus_topics: oai.1
 # pushplus_topics: ["oai.1", "another-group"]
 # 留空则只推送给自己（单人模式）
 
-# DeepSeek 大模型（选填）：定时情报每条新闻的一句总结 + 手动主题分析提炼
-# 未配置时新闻卡片改用规则化「摘要」，不假装用了 AI
+# DeepSeek 大模型（选填）：定时情报每条新闻的 AI 分析 + 手动主题分析提炼
+# 未配置时新闻卡片改用规则化「分析」，不假装用了 AI
 deepseek_api_key: ""
 deepseek_model: "deepseek-v4-flash"
+
+# --- 多源印证：给每条新闻找「同一新闻的不同源头」，AI 先比对再评论 ------------
+# 第一步永远执行：本轮十个源之间离线匹配同一事件（共同标的 + 事件词 / 标题重合）。
+# 第二步外部检索（Google News / Bing News RSS）由 crossref_mode 控制：
+#   auto（默认）—— 连不上时自动熔断，不拖慢本轮
+#   on           —— 每条候选都尝试，不熔断
+#   off          —— 不联网检索，只做本轮跨源匹配（内网/离线机器）
+crossref_mode: auto
+# 每轮最多对多少条做外部检索（优先：有标的、有事件词、本轮尚无其它源印证的条目）
+crossref_max_items: 12
+# 单次外部检索超时（秒），不重试
+crossref_timeout: 6
+# 外部报道与原条目的发布时间最多相差多少小时，超出视为不同事件而丢弃
+crossref_max_gap_hours: 36
 
 # --- 主题因子分析（一对一）：python main.py --theme "人形机器人" -------------
 # 只输入主题，自动完成 A股市场监督管理视角 + qlib Alpha158 因子模型分析。

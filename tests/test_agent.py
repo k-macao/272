@@ -247,7 +247,7 @@ class TestAgentFlow(AgentTestCase):
         self.assertIn("源A", report.html)
 
     def test_enriches_live_quote_into_html(self):
-        """标题带代码时，现价写入推送正文；无 Key 时一句总结走规则摘要。"""
+        """标题带代码时，现价写入推送正文；无 Key 时 AI 分析走规则化分析。"""
         REGISTRY["a"] = make_source("a", "源A", ["宁德时代(300750)拟回购"])
         agent = self._agent(self._config())
 
@@ -269,10 +269,11 @@ class TestAgentFlow(AgentTestCase):
         self.assertIn(">现价</span>", report.html)
         self.assertIn("188.50", report.html)
         self.assertIn("+2.31%", report.html)
-        self.assertIn(">摘要</span>", report.html)
+        self.assertIn(">分析</span>", report.html)
         news = report.groups[0][1][0]
         self.assertEqual(news.last_price, 188.5)
-        self.assertTrue(news.ai_brief)
+        self.assertTrue(news.ai_analysis)
+        self.assertFalse(news.ai_analysis_from_model)
 
     def test_html_output_is_styled(self):
         REGISTRY["a"] = make_source("a", "源A", ["宁德时代回购"])
@@ -280,7 +281,7 @@ class TestAgentFlow(AgentTestCase):
         self.assertIn("#eceef0", report.html)  # 浅灰卡片底
         self.assertIn("#111111", report.html)  # 正文主色
         self.assertIn("宁德时代回购", report.html)
-        self.assertIn("摘要", report.html)  # 无 API Key 时规则化一句总结
+        self.assertIn(">分析</span>", report.html)  # 无 API Key 时规则化分析
 
     def test_state_persisted_to_disk(self):
         REGISTRY["a"] = make_source("a", "源A", ["会被记住的新闻"])

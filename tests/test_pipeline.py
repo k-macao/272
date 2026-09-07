@@ -241,8 +241,8 @@ class TestRender(unittest.TestCase):
         news.price_change = 2.31
         news.price_name = "宁德时代"
         news.price_code = "300750"
-        news.ai_brief = "拟斥资回购，关注后续进度。"
-        news.ai_brief_from_model = True
+        news.ai_analysis = "拟斥资回购，关注后续进度。"
+        news.ai_analysis_from_model = True
         result.items = [news]
         html = render_html(
             [(result, [news])], total=1, window_minutes=180, ref=REF,
@@ -251,7 +251,7 @@ class TestRender(unittest.TestCase):
         self.assertIn(">现价</span>", html)
         self.assertIn("188.50", html)
         self.assertIn("拟斥资回购，关注后续进度。", html)
-        self.assertIn(">AI</span>", html)
+        self.assertIn(">AI 分析</span>", html)
 
 
 if __name__ == "__main__":

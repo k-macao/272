@@ -26,6 +26,36 @@ class TimeQuality(str, Enum):
 
 
 @dataclass
+class RelatedNews:
+    """同一新闻在另一个源头的报道 —— 多源印证的最小单元.
+
+    relation:
+        same_event    同一事件（共同标的 + 共同事件词，或标题高度相似）
+        same_subject  同一标的的同期消息（只共享标的，事件词不同）
+    via:
+        batch         本轮其它抓取源（离线匹配）
+        google / bing 外部新闻检索（RSS，只保留带可验证发布时间的结果）
+    """
+
+    source_label: str
+    title: str
+    url: str = ""
+    published_at: datetime | None = None
+    relation: str = "same_event"
+    via: str = "batch"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_label": self.source_label,
+            "title": self.title,
+            "url": self.url,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "relation": self.relation,
+            "via": self.via,
+        }
+
+
+@dataclass
 class Item:
     """一条抓取到的情报条目."""
 
@@ -66,11 +96,17 @@ class Item:
     price_code: str = ""
     """现价对应的证券代码。"""
 
-    ai_brief: str = ""
-    """一句话总结（约 40 字）。"""
+    related: list[RelatedNews] = field(default_factory=list)
+    """同一新闻在其它源头的报道（多源印证）。找不到就是空列表，绝不凑数。"""
 
-    ai_brief_from_model: bool = False
-    """True = DeepSeek 生成；False = 规则化摘要（不假装用了 AI）。"""
+    related_searched: bool = False
+    """本轮是否对该条做过外部新闻检索（区分「没搜」与「搜了没找到」）。"""
+
+    ai_analysis: str = ""
+    """AI 分析（约 120 字）：事件要点 + 多源印证 + 关注点。"""
+
+    ai_analysis_from_model: bool = False
+    """True = DeepSeek 生成；False = 规则化分析（不假装用了 AI）。"""
 
     def dedupe_key(self) -> str:
         """去重键.
@@ -97,8 +133,10 @@ class Item:
             "price_change": self.price_change,
             "price_name": self.price_name,
             "price_code": self.price_code,
-            "ai_brief": self.ai_brief,
-            "ai_brief_from_model": self.ai_brief_from_model,
+            "related": [r.to_dict() for r in self.related],
+            "related_searched": self.related_searched,
+            "ai_analysis": self.ai_analysis,
+            "ai_analysis_from_model": self.ai_analysis_from_model,
         }
 
 
