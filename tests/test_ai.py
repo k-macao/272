@@ -85,6 +85,14 @@ class TestDeepSeekAI(unittest.TestCase):
         self.assertIn("严禁编造", NEWS_ANALYSIS_PROMPT)
         self.assertIn("不做买卖建议", NEWS_ANALYSIS_PROMPT)
 
+    def test_news_prompt_asks_for_one_liner(self):
+        """每条先要一句投资专家口吻的大白话，再要详细分析。"""
+        self.assertIn("一句话", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("投资专家", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("1. 一句话：", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("分析：", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("「一句话」同样受此约束", NEWS_ANALYSIS_PROMPT)
+
     def test_analyze_news_missing_key(self):
         ok, msg = DeepSeekAI("").analyze_news([(1, "源", "标题", "摘要", [])])
         self.assertFalse(ok)

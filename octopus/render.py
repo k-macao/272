@@ -28,6 +28,8 @@ ACCENT_WASH = "#edf8d1" # 荧光绿浅点缀（仅用于非荧光绿文字的背
 SURFACE_ALT = "#d9dde0" # 灰色辅助底
 CODE_BG = "#181a1d"
 CODE_TEXT = "#eff6df"
+HEADLINE_BG = "#1c1f23"   # 一句人话的深底（每条新闻开头，全页最突出）
+HEADLINE_TEXT = "#f2f7e6" # 深底上的浅色正文
 QUOTE_BG = "#e1e4e7"
 WARN_BG = "#e7e1de"
 WARN_BORDER = "#c9beb9"
@@ -170,6 +172,7 @@ def _row(item: Item, ref: datetime) -> str:
         tags_html = f'<div style="margin-top:4px;">{chips}</div>'
 
     quote_html = _quote_line(item)
+    headline_html = _headline_block(item)
     analysis_html = _analysis_block(item)
     related_html = _related_block(item)
 
@@ -185,10 +188,31 @@ def _row(item: Item, ref: datetime) -> str:
     return (
         f'<div style="padding:8px 0;border-bottom:1px dashed {BORDER};">'
         f'<div style="font-size:14px;">{title_html}</div>'
-        f"{quote_html}{summary_html}{related_html}{analysis_html}"
+        f"{headline_html}{quote_html}{summary_html}{related_html}{analysis_html}"
         f'<div style="font-size:12px;margin-top:4px;">{meta}</div>'
         f"{tags_html}"
         f"</div>"
+    )
+
+
+def _headline_block(item: Item) -> str:
+    """每条新闻开头的一句人话：投资专家口吻的大白话结论，全页最突出的一块。
+
+    深底 + 荧光绿左边条，一眼就能扫到；AI 生成标「AI 一句话」，
+    规则化兜底只标「一句话」，不假装用了大模型。
+    """
+    text = (item.ai_headline or "").strip()
+    if not text:
+        return ""
+    label = "AI 一句话" if item.ai_headline_from_model else "一句话"
+    return (
+        f'<div style="background:{HEADLINE_BG};border-left:4px solid {ACCENT};'
+        f'border-radius:5px;padding:7px 9px;margin-top:6px;">'
+        f'<span style="display:inline-block;background:{ACCENT};color:{HEADLINE_BG};'
+        f'border-radius:3px;padding:1px 6px;margin-right:7px;font-size:11px;'
+        f'font-weight:700;vertical-align:1px;">{label}</span>'
+        f'<span style="font-size:14px;font-weight:700;color:{HEADLINE_TEXT};'
+        f'line-height:1.6;">{html.escape(text)}</span></div>'
     )
 
 
@@ -324,6 +348,10 @@ def _footer(
     lines.append(
         "多源印证：先在本轮十个源之间匹配同一事件，再检索 Google/Bing News 找不同源头的报道；"
         "检索结果同样校验发布时间，找不到就如实标「单一来源」"
+    )
+    lines.append(
+        "每条开头一句「人话」结论：投资专家口吻的大白话，配置了 DeepSeek 由 AI 生成，"
+        "否则为规则化表述，均不做方向判断"
     )
     lines.append("每条附 AI 分析（事件要点 / 多源印证 / 关注点）：配置了 DeepSeek 则为 AI 生成，否则为规则化分析，均不编造数据")
     lines.append("内容由程序自动抓取整合，仅供参考，不构成投资建议")

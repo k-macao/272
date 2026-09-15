@@ -283,6 +283,20 @@ class TestAgentFlow(AgentTestCase):
         self.assertIn("宁德时代回购", report.html)
         self.assertIn(">分析</span>", report.html)  # 无 API Key 时规则化分析
 
+    def test_one_liner_leads_each_news_item(self):
+        """每条新闻开头都有突出显示的一句人话（无 Key 时为规则化，不假装是 AI）。"""
+        REGISTRY["a"] = make_source("a", "源A", ["宁德时代拟回购400亿"])
+        report = self._agent(self._config()).run_once(ref=REF)
+        news = report.groups[0][1][0]
+        self.assertTrue(news.ai_headline)
+        self.assertFalse(news.ai_headline_from_model)
+        self.assertIn(">一句话</span>", report.html)
+        self.assertNotIn(">AI 一句话</span>", report.html)
+        self.assertIn(news.ai_headline, report.html)
+        # 一句人话在标题之后、现价与详细分析之前
+        self.assertLess(report.html.index("宁德时代拟回购400亿"), report.html.index(">一句话</span>"))
+        self.assertLess(report.html.index(">一句话</span>"), report.html.index(">分析</span>"))
+
     def test_state_persisted_to_disk(self):
         REGISTRY["a"] = make_source("a", "源A", ["会被记住的新闻"])
         self._agent(self._config()).run_once(ref=REF)
