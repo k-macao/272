@@ -15,12 +15,16 @@ from octopus.enrich import (
     Ticker,
     clip_analysis,
     clip_brief,
+    clip_headline,
     code_to_secid,
     enrich_news,
     extract_tickers,
     fetch_quotes,
     parse_news_analyses,
+    parse_news_reports,
     rule_analysis,
+    rule_headline,
+    split_headline_and_analysis,
 )
 from octopus.http import FetchError
 from octopus.models import Item, RelatedNews, SourceResult, TimeQuality
@@ -315,6 +319,112 @@ class TestAnalysis(unittest.TestCase):
         self.assertTrue(any("news.google.com" in c or "bing.com" in c for c in http.calls))
 
 
+class TestOneLiner(unittest.TestCase):
+    """每条新闻开头的一句人话：模型产出解析、规则化兜底与合规红线。"""
+
+    MODEL_TEXT = (
+        "1. 一句话：公司自己掏钱回购，等于管理层觉得现在不贵。\n"
+        "   分析：事件要点：公司公告拟回购。多源印证：目前仅见单一来源，待其它渠道确认。"
+        "关注点：留意回购进展公告。\n"
+        "2. 一句话：宏观数据要看和市场预期的差。\n"
+        "   分析：事件要点：统计局发布数据。多源印证：目前仅见单一来源，待其它渠道确认。"
+        "关注点：以正式口径为准。\n"
+    )
+
+    def _ai_http(self, content: str) -> MagicMock:
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+        http.post_json.return_value = {"choices": [{"message": {"content": content}}]}
+        return http
+
+    def test_parse_headline_and_analysis(self):
+        reports = parse_news_reports(self.MODEL_TEXT)
+        self.assertEqual(reports[1].headline, "公司自己掏钱回购，等于管理层觉得现在不贵。")
+        self.assertIn("多源印证：目前仅见单一来源", reports[1].analysis)
+        self.assertEqual(reports[2].headline, "宏观数据要看和市场预期的差。")
+        # 老接口只取分析部分，行为不变
+        self.assertEqual(
+            parse_news_analyses(self.MODEL_TEXT)[2].startswith("事件要点"), True
+        )
+
+    def test_parse_without_headline_marker_keeps_analysis(self):
+        """模型没按新格式写「一句话」：分析照用，一句人话交给规则化兜底。"""
+        text = "1. 事件要点：公司公告回购。多源印证：单一来源。关注点：公告原文。"
+        report = parse_news_reports(text)[1]
+        self.assertEqual(report.headline, "")
+        self.assertIn("事件要点", report.analysis)
+
+    def test_headline_takes_first_sentence_only(self):
+        head, analysis = split_headline_and_analysis(
+            "一句话：先说这一句。后面还有第二句。分析：这是正文。"
+        )
+        self.assertEqual(head, "先说这一句。")
+        self.assertEqual(analysis, "这是正文。")
+
+    def test_clip_headline_limits_length(self):
+        self.assertEqual(clip_headline("很长的一句话" * 20)[-1], "…")
+        self.assertLessEqual(len(clip_headline("很长的一句话" * 20)), 49)
+
+    def test_rule_headline_by_event(self):
+        self.assertIn("公告", rule_headline(_item("宁德时代拟回购400亿")))
+        self.assertIn("监管", rule_headline(_item("某公司被证监会立案调查")))
+        self.assertIn("预期", rule_headline(_item("7月 CPI 同比上涨0.5%")))
+        self.assertIn("研报", rule_headline(_item("某券商首次覆盖并给予买入评级")))
+        self.assertTrue(rule_headline(_item("某公司发布提示性公告")))
+
+    def test_rule_headline_is_neutral(self):
+        from octopus.enrich import _BANNED_ANALYSIS
+
+        for title in ("宁德时代拟回购", "某公司被立案调查", "某股涨停", "统计局发布 CPI"):
+            text = rule_headline(_item(title))
+            for word in _BANNED_ANALYSIS:
+                self.assertNotIn(word, text)
+
+    def test_enrich_fills_rule_headline_without_key(self):
+        item = _item("宁德时代拟回购400亿")
+        stats = enrich_news([item], http=None, api_key="")
+        self.assertTrue(item.ai_headline)
+        self.assertFalse(item.ai_headline_from_model)
+        self.assertEqual(stats["headline_rule"], 1)
+        self.assertEqual(stats["headline_ai"], 0)
+
+    def test_ai_headline_and_analysis_both_from_model(self):
+        item = _item("宁德时代拟回购400亿")
+        stats = enrich_news(
+            [item], http=self._ai_http(self.MODEL_TEXT), api_key="sk-test", crossref_mode="off"
+        )
+        self.assertTrue(item.ai_headline_from_model)
+        self.assertEqual(item.ai_headline, "公司自己掏钱回购，等于管理层觉得现在不贵。")
+        self.assertTrue(item.ai_analysis_from_model)
+        self.assertEqual(stats["headline_ai"], 1)
+        self.assertEqual(stats["ai"], 1)
+
+    def test_banned_headline_rejected_but_analysis_kept(self):
+        """一句话里出现荐股措辞 —— 只回退这一句，不连累分析。"""
+        item = _item("某股盘中异动")
+        enrich_news(
+            [item],
+            http=self._ai_http("1. 一句话：建议买入，稳赚不赔。分析：事件要点：盘中异动。"),
+            api_key="sk-test",
+            crossref_mode="off",
+        )
+        self.assertFalse(item.ai_headline_from_model)
+        self.assertNotIn("买入", item.ai_headline)
+        self.assertTrue(item.ai_analysis_from_model)
+
+    def test_overclaim_headline_rejected_on_single_source(self):
+        item = _item("某公司拟回购")
+        enrich_news(
+            [item],
+            http=self._ai_http("1. 一句话：该消息已获多方证实。分析：事件要点：公司拟回购。"),
+            api_key="sk-test",
+            crossref_mode="off",
+        )
+        self.assertFalse(item.ai_headline_from_model)
+        self.assertTrue(item.ai_headline)  # 仍有规则化一句话兜底
+
+
 class TestRenderNewsEnrichment(unittest.TestCase):
     def _html(self, item: Item) -> str:
         result = SourceResult(source="demo", source_label="示例源")
@@ -383,6 +493,42 @@ class TestRenderNewsEnrichment(unittest.TestCase):
         self.assertIn("&lt;script&gt;", html)
         self.assertNotIn("<img", html)
         self.assertNotIn("<b>x</b>", html)
+
+    def test_one_liner_highlighted_at_top_of_item(self):
+        """一句人话排在现价 / 多源 / AI 分析之前，且用深底高亮。"""
+        item = _item("宁德时代拟回购")
+        item.last_price = 188.5
+        item.price_code = "300750"
+        item.ai_headline = "公司自己掏钱回购，等于管理层觉得现在不贵。"
+        item.ai_headline_from_model = True
+        item.ai_analysis = "事件要点：公司公告拟回购。"
+        item.ai_analysis_from_model = True
+        html = self._html(item)
+        self.assertIn(">AI 一句话</span>", html)
+        self.assertIn("公司自己掏钱回购，等于管理层觉得现在不贵。", html)
+        self.assertIn("#1c1f23", html)  # 深底高亮
+        self.assertLess(html.index(">AI 一句话</span>"), html.index(">现价</span>"))
+        self.assertLess(html.index(">AI 一句话</span>"), html.index(">AI 分析</span>"))
+
+    def test_rule_one_liner_does_not_pretend_to_be_ai(self):
+        item = _item("某公司公告")
+        item.ai_headline = "先把这条消息说了什么看清楚，再判断它有多重。"
+        html = self._html(item)
+        self.assertIn(">一句话</span>", html)
+        self.assertNotIn(">AI 一句话</span>", html)
+
+    def test_missing_one_liner_omits_block(self):
+        item = _item("某公司公告")
+        item.ai_analysis = "分析。"
+        self.assertNotIn("一句话</span>", self._html(item))
+
+    def test_one_liner_is_escaped(self):
+        item = _item("某公司公告")
+        item.ai_headline = "<script>alert(1)</script>"
+        item.ai_headline_from_model = True
+        html = self._html(item)
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;", html)
 
     def test_down_move_uses_green(self):
         item = _item("某股跳水")

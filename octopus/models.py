@@ -102,6 +102,12 @@ class Item:
     related_searched: bool = False
     """本轮是否对该条做过外部新闻检索（区分「没搜」与「搜了没找到」）。"""
 
+    ai_headline: str = ""
+    """一句人话分析（约 30 字）：投资专家口吻的大白话结论，渲染在每条新闻开头。"""
+
+    ai_headline_from_model: bool = False
+    """True = DeepSeek 生成；False = 规则化一句话（不假装用了 AI）。"""
+
     ai_analysis: str = ""
     """AI 分析（约 120 字）：事件要点 + 多源印证 + 关注点。"""
 
@@ -135,6 +141,8 @@ class Item:
             "price_code": self.price_code,
             "related": [r.to_dict() for r in self.related],
             "related_searched": self.related_searched,
+            "ai_headline": self.ai_headline,
+            "ai_headline_from_model": self.ai_headline_from_model,
             "ai_analysis": self.ai_analysis,
             "ai_analysis_from_model": self.ai_analysis_from_model,
         }

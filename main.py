@@ -215,6 +215,9 @@ def _print_summary(report) -> None:
         for item in items:
             when = f"{item.published_at:%m-%d %H:%M}" if item.published_at else "??"
             bits = [f"  · {when} [{item.time_quality.value:7s}] {item.title[:60]}"]
+            if item.ai_headline:
+                tag = "AI一句话" if item.ai_headline_from_model else "一句话"
+                bits.append(f"    {tag} {item.ai_headline}")
             if item.last_price is not None:
                 chg = "" if item.price_change is None else f" {item.price_change:+.2f}%"
                 bits.append(f"    现价 {item.price_name or item.price_code} {item.last_price:.2f}{chg}")

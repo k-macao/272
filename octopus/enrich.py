@@ -8,7 +8,8 @@
    核实的若干条做外部新闻检索（Google/Bing News RSS，仅保留带可验证发布
    时间且标题对得上的结果）
 4. AI 分析：配置了 DeepSeek 则把「本条 + 其它源头报道」交给模型，写
-   事件要点 / 多源印证 / 关注点；否则或调用失败时用规则化分析，并如实标注，
+   ① 开头一句「人话」结论（投资专家口吻、大白话、不做方向判断）
+   ② 事件要点 / 多源印证 / 关注点；否则或调用失败时用规则化文本，并如实标注，
    绝不假装用了 AI
 
 任何一步失败只让该条缺少现价/印证/改用规则分析，不会丢条目、不会拖垮整轮推送。
@@ -38,6 +39,15 @@ _CODE_PAREN = re.compile(r"[（(]\s*(\d{6})\s*[）)]")
 _BARE_CODE = re.compile(r"^\d{6}$")
 _WS = re.compile(r"\s+")
 
+#: 模型输出里的段落标记：「一句话：…」+「分析：…」。分析段有时直接写「事件要点：」，
+#: 两种都要能切开；模型没写「一句话」时按老格式整段当分析处理。
+_HEADLINE_MARK = re.compile(
+    r"^(?:【\s*)?(?:一句话点评|投资专家一句话|一句人话|一句话|人话|白话|专家点评|点评|结论)"
+    r"(?:\s*】)?\s*[:：]\s*"
+)
+_ANALYSIS_MARK = re.compile(r"(?:AI\s*)?分析\s*[:：]\s*|事件要点\s*[:：]\s*")
+_SENTENCE_END = re.compile(r"[。！？!?]")
+
 #: 指数别名 -> (6 位代码, 东财 secid)。必须带市场前缀：000001 既是上证也是平安银行。
 INDEX_ALIASES: tuple[tuple[str, str, str], ...] = (
     ("上证指数", "000001", "1.000001"),
@@ -54,6 +64,7 @@ _BANNED_ANALYSIS = ("买入", "卖出", "目标价", "立即建仓", "稳赚", "
 #: 单一来源的条目，模型不得声称已获多方证实
 _OVERCLAIM = ("多方证实", "多家媒体证实", "多源证实", "已获证实", "多家权威媒体")
 ANALYSIS_LIMIT = 160
+HEADLINE_LIMIT = 48
 AI_CHUNK_SIZE = 6
 AI_WORKERS = 3
 
@@ -77,6 +88,14 @@ class Quote:
     source: str = ""
 
 
+@dataclass(frozen=True)
+class NewsReport:
+    """模型对一条情报的两段产出：开头的一句人话 + 详细分析。"""
+
+    headline: str = ""
+    analysis: str = ""
+
+
 def enrich_news(
     items: Iterable[Item],
     *,
@@ -89,10 +108,11 @@ def enrich_news(
     crossref_max_gap_hours: float = 36.0,
     ref=None,
 ) -> dict[str, int]:
-    """就地给条目补现价、多源印证与 AI 分析。返回计数，便于日志。"""
+    """就地给条目补现价、多源印证、一句人话与 AI 分析。返回计数，便于日志。"""
     bag = [it for it in items if it is not None]
     stats = {
         "items": len(bag), "quotes": 0, "ai": 0, "rule": 0,
+        "headline_ai": 0, "headline_rule": 0,
         "linked": 0, "searched": 0, "external_hits": 0,
     }
     if not bag:
@@ -142,6 +162,10 @@ def enrich_news(
     _fill_analysis(bag, http=http, api_key=api_key, model=model)
     stats["ai"] = sum(1 for it in bag if it.ai_analysis_from_model)
     stats["rule"] = sum(1 for it in bag if it.ai_analysis and not it.ai_analysis_from_model)
+    stats["headline_ai"] = sum(1 for it in bag if it.ai_headline_from_model)
+    stats["headline_rule"] = sum(
+        1 for it in bag if it.ai_headline and not it.ai_headline_from_model
+    )
     return stats
 
 
@@ -403,6 +427,54 @@ def rule_analysis(item: Item) -> str:
     return "".join(p for p in (corroboration + "。", focus) if p)
 
 
+#: 事件类别 -> 一句人话（投资专家口吻，但不做方向判断、不给建议）。
+#: 未配置大模型或调用失败时用它兜底，卡片上标「一句话」而不是「AI 一句话」。
+RULE_HEADLINES: tuple[tuple[frozenset[str], str], ...] = (
+    (
+        frozenset({"监管", "风险警示"}),
+        "监管已经盯上这家公司，处罚或退市风险要按公告口径算清，别只看股价反应。",
+    ),
+    (frozenset({"问询"}), "交易所发函等于要公司把话说清楚，回复公告才是重点。"),
+    (frozenset({"回购"}), "公司自己掏真金白银买回股份，能买多少、买多久要看公告条款。"),
+    (frozenset({"增持"}), "股东或高管自己掏钱加仓，态度比研报实在，规模和期限决定分量。"),
+    (frozenset({"减持"}), "股东要减持或限售股解禁，短期多了一股卖压，量级和节奏是关键。"),
+    (frozenset({"分红"}), "现金分红是把利润真发到手上，能不能持续要看盈利和现金流。"),
+    (frozenset({"业绩"}), "业绩数字最硬，但得跟上一期和市场预期比，才知道算好还是算坏。"),
+    (frozenset({"订单"}), "拿到订单说明有生意，但从签约到确认收入还有距离，金额口径看公告。"),
+    (frozenset({"再融资"}), "再融资是向市场要钱，摊薄多少、钱投到哪里，是两笔要分开算的账。"),
+    (
+        frozenset({"并购重组"}),
+        "并购重组改的是公司结构，成不成、溢价多少还要过监管和股东这一关。",
+    ),
+    (frozenset({"转债"}), "转债跟着正股走，还要盯转股价和赎回条款，两头都可能变。"),
+    (frozenset({"评级"}), "研报观点只代表那一家机构，先看它的假设和数据口径。"),
+    (frozenset({"宏观数据"}), "宏观数据是全局变量，关键看实际值和市场原先的预期差多少。"),
+    (frozenset({"货币政策"}), "资金面松紧直接影响估值，看落地规模和后续操作能不能接上。"),
+    (
+        frozenset({"涨停", "跌停", "异动", "拉升", "回撤"}),
+        "盘中涨跌是结果不是原因，得找到对应的消息或公告才解释得通。",
+    ),
+    (frozenset({"资金"}), "资金流向只说明当天谁在买卖，一天的数字还谈不上趋势。"),
+    (frozenset({"人事"}), "换人改变的是预期，真正的变化还得等经营数据说话。"),
+    (frozenset({"诉讼"}), "诉讼没判决前都是不确定项，先看涉案金额占公司体量多少。"),
+    (frozenset({"停复牌"}), "停牌期间价格会一次性重新定价，复牌前后波动通常被放大。"),
+    (frozenset({"上市"}), "发行与上市影响的是供给和情绪，公司基本面还得单独看。"),
+)
+
+_RULE_HEADLINE_FALLBACK = "先把这条消息说了什么、由谁披露看清楚，再判断它有多重。"
+
+
+def rule_headline(item: Item) -> str:
+    """规则化的一句人话：不调用大模型，只按事件类型给出中性的大白话结论。"""
+    from .crossref import event_tags
+
+    tags = set(event_tags(f"{item.title} {item.summary}"))
+    for group, text in RULE_HEADLINES:
+        if tags & group:
+            return text
+    return _RULE_HEADLINE_FALLBACK
+
+
 def _rule_focus(item: Item) -> str:
     from .crossref import event_tags
 
@@ -423,6 +495,20 @@ def _rule_focus(item: Item) -> str:
     if tags & {"评级"} or kind in ("研报", "投研", "机构预期", "宏观研报", "行业研报"):
         return "研报观点仅代表发布机构，留意其数据口径与假设。"
     return "留意后续是否有官方渠道的进一步披露。"
+
+
+def clip_headline(text: str, limit: int = HEADLINE_LIMIT) -> str:
+    """整理模型输出的「一句人话」：取第一句、去掉标记与引号，超长省略。"""
+    text = _WS.sub(" ", (text or "").replace("\n", " ")).strip()
+    text = _HEADLINE_MARK.sub("", text.strip("\"'“”"), count=1).strip()
+    end = _SENTENCE_END.search(text)
+    if end:
+        text = text[: end.end()].strip()
+    if len(text) > limit:
+        return text[:limit].rstrip("，,;；、 ") + "…"
+    if text and text[-1] not in "。！？!?…":
+        return text + "。"
+    return text
 
 
 def clip_brief(text: str, limit: int = 48) -> str:
@@ -454,8 +540,12 @@ def clip_analysis(text: str, limit: int = ANALYSIS_LIMIT) -> str:
     return cut.rstrip("，,;；、 ") + "…"
 
 
-def parse_news_analyses(text: str) -> dict[int, str]:
-    """解析「1. xxx」编号列表。容错 1、/ 1: / 【1】 等写法，且允许一条分析跨多行。"""
+def _group_numbered(text: str) -> dict[int, str]:
+    """把「1. xxx」编号列表拆成 {序号: 原文}。
+
+    容错 1、/ 1: / 【1】 / 1) 等写法，且允许一条内容跨多行（模型常把
+    「一句话」与「分析」分成两行写）。
+    """
     line_re = re.compile(
         r"^\s*(?:[#\-*]+\s*)?(?:【\s*)?(\d{1,3})\s*(?:】|[.．、:：)）])\s*(.*?)\s*$"
     )
@@ -474,12 +564,55 @@ def parse_news_analyses(text: str) -> dict[int, str]:
             continue
         if current is not None:
             out[current].append(line)
-    result: dict[int, str] = {}
-    for num, parts in out.items():
-        joined = clip_analysis(" ".join(parts))
-        if joined:
-            result[num] = joined
+    return {
+        num: _WS.sub(" ", " ".join(parts)).strip() for num, parts in out.items() if parts
+    }
+
+
+def split_headline_and_analysis(raw: str) -> tuple[str, str]:
+    """把一条模型产出拆成（一句话, 分析）。
+
+    模型没写「一句话」标记时，一句话为空串，由规则化一句话兜底，
+    整段仍按分析处理 —— 老格式的输出不会因为新增字段而失效。
+    """
+    text = _WS.sub(" ", (raw or "").replace("\n", " ")).strip()
+    if not _HEADLINE_MARK.match(text):
+        return "", clip_analysis(text)
+    rest = _HEADLINE_MARK.sub("", text, count=1)
+    marker = _ANALYSIS_MARK.search(rest)
+    if marker is None:
+        return clip_headline(rest), ""
+    return clip_headline(rest[: marker.start()]), clip_analysis(rest[marker.end() :])
+
+
+def parse_news_reports(text: str) -> dict[int, NewsReport]:
+    """解析「1. 一句话：… / 分析：…」编号列表，按编号返回一句话与分析。"""
+    result: dict[int, NewsReport] = {}
+    for num, raw in _group_numbered(text).items():
+        headline, analysis = split_headline_and_analysis(raw)
+        if headline or analysis:
+            result[num] = NewsReport(headline=headline, analysis=analysis)
     return result
+
+
+def parse_news_analyses(text: str) -> dict[int, str]:
+    """解析「1. xxx」编号列表里的分析部分（一句话见 parse_news_reports）。"""
+    return {
+        num: report.analysis
+        for num, report in parse_news_reports(text).items()
+        if report.analysis
+    }
+
+
+def _acceptable(item: Item, text: str) -> bool:
+    """一句话与分析共用的合规红线。
+
+    荐股类措辞一律拒收；没有任何其它源头却声称「已获多方证实」的也拒收 ——
+    拒收后保留规则化文本，宁可朴素也不越线。
+    """
+    if not text or any(w in text for w in _BANNED_ANALYSIS):
+        return False
+    return bool(item.related) or not any(w in text for w in _OVERCLAIM)
 
 
 def _fill_analysis(
@@ -489,12 +622,19 @@ def _fill_analysis(
     api_key: str,
     model: str,
 ) -> None:
+    """先铺规则化兜底（一句话 + 分析），再用大模型覆盖能覆盖的部分。
+
+    两段各自过同一套合规红线；被拒收的那段保留规则化文本，不假装是 AI。
+    """
     from . import crossref
 
     for item in items:
         if not item.ai_analysis:
             item.ai_analysis = rule_analysis(item)
             item.ai_analysis_from_model = False
+        if not item.ai_headline:
+            item.ai_headline = rule_headline(item)
+            item.ai_headline_from_model = False
 
     if not (api_key or "").strip() or http is None:
         return
@@ -526,15 +666,17 @@ def _fill_analysis(
         if not ok:
             log.info("AI 分析未成功：%s", text)
             return
-        mapping = parse_news_analyses(text)
+        mapping = parse_news_reports(text)
         for i, item in enumerate(chunk):
-            analysis = mapping.get(i + 1, "")
-            if not analysis or any(w in analysis for w in _BANNED_ANALYSIS):
+            report = mapping.get(i + 1)
+            if report is None:
                 continue
-            if not item.related and any(w in analysis for w in _OVERCLAIM):
-                continue  # 单一来源却声称多方证实 —— 拒收
-            item.ai_analysis = analysis
-            item.ai_analysis_from_model = True
+            if _acceptable(item, report.analysis):
+                item.ai_analysis = report.analysis
+                item.ai_analysis_from_model = True
+            if _acceptable(item, report.headline):
+                item.ai_headline = report.headline
+                item.ai_headline_from_model = True
 
     if len(chunks) == 1:
         run_chunk(chunks[0])

@@ -428,12 +428,15 @@ class Agent:
                 ref=ref,
             )
             log.info(
-                "情报增强：%d 条中现价 %d，本轮跨源印证 %d，外部检索 %d 条/命中 %d 篇，AI 分析 %d，规则分析 %d",
+                "情报增强：%d 条中现价 %d，本轮跨源印证 %d，外部检索 %d 条/命中 %d 篇，"
+                "一句人话 AI %d/规则 %d，AI 分析 %d，规则分析 %d",
                 stats.get("items", 0),
                 stats.get("quotes", 0),
                 stats.get("linked", 0),
                 stats.get("searched", 0),
                 stats.get("external_hits", 0),
+                stats.get("headline_ai", 0),
+                stats.get("headline_rule", 0),
                 stats.get("ai", 0),
                 stats.get("rule", 0),
             )
