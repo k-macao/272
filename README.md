@@ -506,7 +506,7 @@ octopus/
 ├── ai.py             # DeepSeek 大模型：内容提炼 + 主题因子报告解读 + 新闻逐条「一句话 + 分析」
 ├── enrich.py         # 情报条目：提取代码、现价、多源印证编排、一句人话 + AI/规则化分析
 ├── crossref.py       # 多源印证：本轮跨源匹配同一事件 + Google/Bing News 检索不同源头
-├── render.py         # 浅灰底 + 深色字的 HTML 渲染（每条开头高亮一句人话）
+├── render.py         # 浅灰底 + 深色字的 HTML 渲染（每条开头高亮一句人话，相邻条目底色交替）
 ├── notify.py         # PushPlus 推送
 ├── agent.py          # 主流程编排
 ├── merge.py          # 新增：多报告合并、去重、溯源与一对一推送

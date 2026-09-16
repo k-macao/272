@@ -18,6 +18,10 @@ from .timeutil import humanize, stamp
 # --- 配色 ------------------------------------------------------------------
 BG = "#d2d5d8"          # 深浅灰主背景
 CARD_BG = "#eceef0"     # 浅灰卡片底
+#: 相邻两条情报的底色一深一浅交替（见 _row_bg）：前后两条不必盯着细虚线找边界，
+#: 一眼就能分清哪一块是哪条。两档都刻意偏离卡片底，单独出现时也不会糊在卡片上。
+ROW_BG_A = "#dfe4e7"    # 奇数条：深一档的浅灰
+ROW_BG_B = "#f8f9fa"    # 偶数条：浅一档的近白
 NAVY = "#111111"        # 正文主色：黑
 NAVY_DEEP = "#090909"   # 标题黑
 NAVY_SOFT = "#5b5f64"   # 次要信息灰
@@ -25,7 +29,7 @@ BORDER = "#a4a9ae"
 ACCENT = "#b7ff26"      # 荧光绿
 ACCENT_BG = "#202327"   # 荧光绿文字底色（深底 + 荧光绿字，保证可读）
 ACCENT_WASH = "#edf8d1" # 荧光绿浅点缀（仅用于非荧光绿文字的背景/边框）
-SURFACE_ALT = "#d9dde0" # 灰色辅助底
+SURFACE_ALT = "#ccd2d6" # 灰色辅助底（比 ROW_BG_A 深一档，压在交替底色上仍能看清）
 CODE_BG = "#181a1d"
 CODE_TEXT = "#eff6df"
 HEADLINE_BG = "#1c1f23"   # 一句人话的深底（每条新闻开头，全页最突出）
@@ -116,7 +120,7 @@ def _header(total: int, window_minutes: int, ref: datetime) -> str:
 
 
 def _section(result: SourceResult, items: list[Item], ref: datetime) -> str:
-    rows = "".join(_row(item, ref) for item in items)
+    rows = "".join(_row(item, ref, index=i) for i, item in enumerate(items))
     degraded_note = ""
     if result.degraded:
         degraded_note = (
@@ -126,7 +130,8 @@ def _section(result: SourceResult, items: list[Item], ref: datetime) -> str:
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-radius:8px;padding:10px 12px;margin-bottom:12px;">'
-        f'<div style="font-size:15px;font-weight:700;color:{NAVY_DEEP};'
+        # padding-left 与 _row 里底色块的内边距一致，标题文字和条目标题左侧对齐
+        f'<div style="font-size:15px;font-weight:700;color:{NAVY_DEEP};padding-left:10px;'
         f'padding-bottom:7px;margin-bottom:8px;border-bottom:2px solid {BORDER};">'
         f"▍{html.escape(result.source_label)}"
         f'<span style="font-size:12px;color:{NAVY_SOFT};font-weight:400;">'
@@ -135,7 +140,17 @@ def _section(result: SourceResult, items: list[Item], ref: datetime) -> str:
     )
 
 
-def _row(item: Item, ref: datetime) -> str:
+def _row_bg(index: int) -> str:
+    """相邻两条内容的底色：奇数条深一档，偶数条浅一档，前后两条一眼分得开。"""
+    return ROW_BG_A if index % 2 == 0 else ROW_BG_B
+
+
+def _row(item: Item, ref: datetime, *, index: int = 0) -> str:
+    """一条情报。
+
+    ``index`` 是本条在所属源里的序号，用来取交替底色：相邻两条底色一深一浅，
+    前后两块内容靠背景色就能分开，不必依赖那条很细的虚线。
+    """
     title = html.escape(item.title)
     if item.url:
         title_html = (
@@ -186,7 +201,8 @@ def _row(item: Item, ref: datetime) -> str:
         )
 
     return (
-        f'<div style="padding:8px 0;border-bottom:1px dashed {BORDER};">'
+        f'<div style="background:{_row_bg(index)};border-radius:6px;padding:8px 10px;'
+        f'margin-top:8px;">'
         f'<div style="font-size:14px;">{title_html}</div>'
         f"{headline_html}{quote_html}{summary_html}{related_html}{analysis_html}"
         f'<div style="font-size:12px;margin-top:4px;">{meta}</div>'
@@ -1165,7 +1181,7 @@ def _theme_supervision_card(analysis) -> str:
             f'<div style="font-size:12px;font-weight:700;color:{NAVY_DEEP};'
             f'margin:8px 0 4px;">与分析标的直接相关</div>'
         )
-        lines.extend(_supervision_row(e) for e in related[:6])
+        lines.extend(_supervision_row(e, index=i) for i, e in enumerate(related[:6]))
     focus_ids = {id(e) for e in related}
     others = [e for e in sup.events if id(e) not in focus_ids][:6]
     if others:
@@ -1173,7 +1189,7 @@ def _theme_supervision_card(analysis) -> str:
             f'<div style="font-size:12px;font-weight:700;color:{NAVY_DEEP};'
             f'margin:8px 0 4px;">同期市场监管动态</div>'
         )
-        lines.extend(_supervision_row(e) for e in others)
+        lines.extend(_supervision_row(e, index=i) for i, e in enumerate(others))
     if not sup.events:
         lines.append(
             f'<div style="font-size:12px;color:{NAVY_SOFT};">'
@@ -1194,14 +1210,15 @@ def _theme_supervision_card(analysis) -> str:
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-radius:8px;padding:10px 12px;margin-bottom:12px;">'
-        f'<div style="font-size:15px;font-weight:700;color:{NAVY_DEEP};'
+        # padding-left 与 _supervision_row 的底色块内边距一致，标题与事件标题左侧对齐
+        f'<div style="font-size:15px;font-weight:700;color:{NAVY_DEEP};padding-left:8px;'
         f'padding-bottom:7px;margin-bottom:8px;border-bottom:2px solid {BORDER};">'
         f"▍A股市场监督管理</div>"
         f"{''.join(lines)}</div>"
     )
 
 
-def _supervision_row(event) -> str:
+def _supervision_row(event, *, index: int = 0) -> str:
     color = RED if event.severity >= 85 else ("#c2681b" if event.severity >= 65 else NAVY_SOFT)
     title = html.escape(event.title)
     if event.url:
@@ -1210,7 +1227,8 @@ def _supervision_row(event) -> str:
             f'style="color:{NAVY_DEEP};text-decoration:none;">{title}</a>'
         )
     return (
-        f'<div style="padding:5px 0;border-bottom:1px dashed {BORDER};">'
+        f'<div style="background:{_row_bg(index)};border-radius:6px;padding:6px 8px;'
+        f'margin-top:6px;">'
         f'<span style="display:inline-block;background:{ACCENT_WASH};color:{color};'
         f'border-radius:3px;padding:0 5px;margin-right:5px;font-size:11px;">'
         f"{html.escape(event.category)}</span>"

@@ -26,7 +26,13 @@ from octopus.factor.market import (
 )
 from octopus.factor.pipeline import ThemePipeline, build_facts, rule_based_report
 from octopus.http import FetchError
-from octopus.render import PUSH_TITLE, render_theme, render_theme_title
+from octopus.render import (
+    PUSH_TITLE,
+    ROW_BG_A,
+    ROW_BG_B,
+    render_theme,
+    render_theme_title,
+)
 from tests.fixtures.factor_samples import (
     ANNOUNCEMENTS,
     BOARD_MEMBERS,
@@ -525,6 +531,15 @@ class TestRenderTheme(PipelineTestCase):
 
     def test_shows_supervision_events(self):
         self.assertIn("问询关注", self.html)
+
+    def test_supervision_rows_alternate_backgrounds(self):
+        """监管事件列表里前后两条底色同样一深一浅，清晰分得开。"""
+        self.assertIn(
+            f"background:{ROW_BG_A};border-radius:6px;padding:6px 8px;", self.html
+        )
+        self.assertIn(
+            f"background:{ROW_BG_B};border-radius:6px;padding:6px 8px;", self.html
+        )
 
     def test_shows_disclaimer(self):
         self.assertIn("不构成", self.html)
