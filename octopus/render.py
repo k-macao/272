@@ -127,16 +127,23 @@ def _section(result: SourceResult, items: list[Item], ref: datetime) -> str:
             f'<span style="font-size:11px;color:{NAVY_SOFT};font-weight:400;">'
             f"（{html.escape(result.degraded)}）</span>"
         )
+
+    # 问财·同花顺是辅助数据源；保留其中的情报条目，但不再单独占一行显示同级来源标题。
+    section_heading = ""
+    if result.source_label != "问财·同花顺":
+        section_heading = (
+            # padding-left 与 _row 里底色块的内边距一致，标题文字和条目标题左侧对齐
+            f'<div style="font-size:15px;font-weight:700;color:{NAVY_DEEP};padding-left:10px;'
+            f'padding-bottom:7px;margin-bottom:8px;border-bottom:2px solid {BORDER};">'
+            f"▍{html.escape(result.source_label)}"
+            f'<span style="font-size:12px;color:{NAVY_SOFT};font-weight:400;">'
+            f" · {len(items)} 条</span>{degraded_note}</div>"
+        )
+
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-radius:8px;padding:10px 12px;margin-bottom:12px;">'
-        # padding-left 与 _row 里底色块的内边距一致，标题文字和条目标题左侧对齐
-        f'<div style="font-size:15px;font-weight:700;color:{NAVY_DEEP};padding-left:10px;'
-        f'padding-bottom:7px;margin-bottom:8px;border-bottom:2px solid {BORDER};">'
-        f"▍{html.escape(result.source_label)}"
-        f'<span style="font-size:12px;color:{NAVY_SOFT};font-weight:400;">'
-        f" · {len(items)} 条</span>{degraded_note}</div>"
-        f"{rows}</div>"
+        f"{section_heading}{rows}</div>"
     )
 
 
@@ -348,10 +355,6 @@ def _footer(
     window_minutes: int,
 ) -> str:
     lines: list[str] = []
-    lines.append(
-        f"数据源：问财 · 巨潮 · 迈博汇金 · 集思录 · 证券之星 · "
-        f"慧博投研 · 国家统计局 · iFinD · 东方财富 · 萝卜投研"
-    )
     if degraded:
         notes = "；".join(f"{r.source_label}{r.degraded}" for r in degraded if r.degraded)
         if notes:
@@ -359,18 +362,6 @@ def _footer(
     if failures:
         names = "、".join(r.source_label for r in failures)
         lines.append(f"本轮未取到数据：{names}（已自动重试，下轮继续）")
-    lines.append("时间校验：仅推送带可验证发布时间的条目，无时间戳或时间异常的一律丢弃")
-    lines.append("现价为抓取时刻行情快照（东财优先，失败降级 Yahoo）；无对应标的则不展示")
-    lines.append(
-        "多源印证：先在本轮十个源之间匹配同一事件，再检索 Google/Bing News 找不同源头的报道；"
-        "检索结果同样校验发布时间，找不到就如实标「单一来源」"
-    )
-    lines.append(
-        "每条开头一句「人话」结论：投资专家口吻的大白话，配置了 DeepSeek 由 AI 生成，"
-        "否则为规则化表述，均不做方向判断"
-    )
-    lines.append("每条附 AI 分析（事件要点 / 多源印证 / 关注点）：配置了 DeepSeek 则为 AI 生成，否则为规则化分析，均不编造数据")
-    lines.append("内容由程序自动抓取整合，仅供参考，不构成投资建议")
 
     body = "".join(
         f'<div style="margin-top:3px;">{html.escape(line)}</div>' for line in lines
