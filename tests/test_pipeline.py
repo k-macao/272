@@ -202,23 +202,58 @@ class TestRender(unittest.TestCase):
         self.assertIn("12分钟前", html)
         self.assertIn("07-27 10:18", html)
 
-    def test_hides_iwencai_section_heading_but_keeps_items(self):
-        result = SourceResult(source="iwencai", source_label="问财·同花顺")
-        hidden_heading = "▍问财·同花顺"
+    def test_hides_all_source_section_headings_but_keeps_items(self):
+        """来源标题整级隐藏：正文不出现任何同级来源标题，条目一条不少。"""
+        em = SourceResult(source="eastmoney", source_label="东方财富")
+        iw = SourceResult(source="iwencai", source_label="问财·同花顺")
         news = Item(
+            source="eastmoney",
+            source_label="东方财富",
+            title="宁德时代拟回购400亿",
+            published_at=REF,
+            time_quality=TimeQuality.EXACT,
+        )
+        wencai = Item(
             source="iwencai",
             source_label="问财·同花顺",
             title="嘉美包装封板",
             published_at=REF,
             time_quality=TimeQuality.EXACT,
         )
-        result.items = [news]
+        em.items = [news]
+        iw.items = [wencai]
         html = render_html(
-            [(result, [news])], total=1, window_minutes=180, ref=REF,
+            [(em, [news]), (iw, [wencai])], total=2, window_minutes=180, ref=REF,
             failures=[], degraded=[],
         )
-        self.assertNotIn(hidden_heading, html)
+        self.assertNotIn("▍", html)          # 没有任何同级来源标题
+        self.assertNotIn("东方财富", html)
+        self.assertNotIn("问财·同花顺", html)
+        self.assertNotIn("· 1 条", html)     # 标题上的条数角标一并去掉
+        self.assertIn("宁德时代拟回购400亿", html)
         self.assertIn("嘉美包装封板", html)
+
+    def test_degraded_note_only_lives_in_footer(self):
+        """来源标题隐藏后，降级说明只在页脚出现一次，不在正文重复挂来源名。"""
+        em = SourceResult(
+            source="eastmoney",
+            source_label="东方财富",
+            degraded="（主接口超时，改用备用接口）",
+        )
+        news = Item(
+            source="eastmoney",
+            source_label="东方财富",
+            title="宁德时代拟回购400亿",
+            published_at=REF,
+            time_quality=TimeQuality.EXACT,
+        )
+        em.items = [news]
+        html = render_html(
+            [(em, [news])], total=1, window_minutes=180, ref=REF,
+            failures=[], degraded=[em],
+        )
+        self.assertIn("降级说明：东方财富（主接口超时，改用备用接口）", html)
+        self.assertEqual(html.count("东方财富"), 1)
 
     def test_html_escapes_dangerous_input(self):
         result = SourceResult(source="x", source_label="源")

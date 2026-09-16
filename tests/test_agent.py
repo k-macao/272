@@ -244,7 +244,8 @@ class TestAgentFlow(AgentTestCase):
         agent = Agent(self._config(), base_dir=self.base)
         report = agent.run_once(ref=REF, dry_run=True)
         self.assertTrue(report.pushed)  # dry-run 视为成功
-        self.assertIn("源A", report.html)
+        self.assertIn("新闻", report.html)
+        self.assertNotIn("源A", report.html)  # 同级来源标题整级隐藏，正文不再出现来源名
 
     def test_enriches_live_quote_into_html(self):
         """标题带代码时，现价写入推送正文；无 Key 时 AI 分析走规则化分析。"""
