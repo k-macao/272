@@ -127,16 +127,23 @@ def _section(result: SourceResult, items: list[Item], ref: datetime) -> str:
             f'<span style="font-size:11px;color:{NAVY_SOFT};font-weight:400;">'
             f"（{html.escape(result.degraded)}）</span>"
         )
+
+    # 问财·同花顺是辅助数据源；保留其中的情报条目，但不再单独占一行显示同级来源标题。
+    section_heading = ""
+    if result.source_label != "问财·同花顺":
+        section_heading = (
+            # padding-left 与 _row 里底色块的内边距一致，标题文字和条目标题左侧对齐
+            f'<div style="font-size:15px;font-weight:700;color:{NAVY_DEEP};padding-left:10px;'
+            f'padding-bottom:7px;margin-bottom:8px;border-bottom:2px solid {BORDER};">'
+            f"▍{html.escape(result.source_label)}"
+            f'<span style="font-size:12px;color:{NAVY_SOFT};font-weight:400;">'
+            f" · {len(items)} 条</span>{degraded_note}</div>"
+        )
+
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-radius:8px;padding:10px 12px;margin-bottom:12px;">'
-        # padding-left 与 _row 里底色块的内边距一致，标题文字和条目标题左侧对齐
-        f'<div style="font-size:15px;font-weight:700;color:{NAVY_DEEP};padding-left:10px;'
-        f'padding-bottom:7px;margin-bottom:8px;border-bottom:2px solid {BORDER};">'
-        f"▍{html.escape(result.source_label)}"
-        f'<span style="font-size:12px;color:{NAVY_SOFT};font-weight:400;">'
-        f" · {len(items)} 条</span>{degraded_note}</div>"
-        f"{rows}</div>"
+        f"{section_heading}{rows}</div>"
     )
 
 

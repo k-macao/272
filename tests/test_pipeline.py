@@ -202,6 +202,24 @@ class TestRender(unittest.TestCase):
         self.assertIn("12分钟前", html)
         self.assertIn("07-27 10:18", html)
 
+    def test_hides_iwencai_section_heading_but_keeps_items(self):
+        result = SourceResult(source="iwencai", source_label="问财·同花顺")
+        hidden_heading = "▍问财·同花顺"
+        news = Item(
+            source="iwencai",
+            source_label="问财·同花顺",
+            title="嘉美包装封板",
+            published_at=REF,
+            time_quality=TimeQuality.EXACT,
+        )
+        result.items = [news]
+        html = render_html(
+            [(result, [news])], total=1, window_minutes=180, ref=REF,
+            failures=[], degraded=[],
+        )
+        self.assertNotIn(hidden_heading, html)
+        self.assertIn("嘉美包装封板", html)
+
     def test_html_escapes_dangerous_input(self):
         result = SourceResult(source="x", source_label="源")
         evil = Item(
