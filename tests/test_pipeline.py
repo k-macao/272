@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from octopus.models import Item, SourceResult, TimeQuality
-from octopus.render import PUSH_TITLE, render_html, render_title
+from octopus.render import (
+    CARD_BG,
+    PUSH_TITLE,
+    ROW_BG_A,
+    ROW_BG_B,
+    render_html,
+    render_title,
+)
 from octopus.sources.base import Source
 from octopus.state import SeenStore
 from octopus.timeutil import CN_TZ
@@ -233,6 +241,30 @@ class TestRender(unittest.TestCase):
     def test_title_ignores_long_headline(self):
         long_item = item("这是一条非常非常长的新闻标题" * 5, 1)
         self.assertEqual(render_title(1, REF, long_item), PUSH_TITLE)
+
+    def _row_backgrounds(self, count: int) -> list[str]:
+        """按出现顺序取出每一条情报行的底色。"""
+        result = SourceResult(source="demo", source_label="示例源")
+        items = [item(f"第{i}条情报", 5 * (i + 1)) for i in range(count)]
+        result.items = items
+        html = render_html(
+            [(result, items)], total=count, window_minutes=180, ref=REF,
+            failures=[], degraded=[],
+        )
+        return re.findall(
+            r"background:(#[0-9a-f]{6});border-radius:6px;padding:8px 10px;", html
+        )
+
+    def test_adjacent_rows_use_alternating_backgrounds(self):
+        """前后两条新闻底色一深一浅交替，靠背景色就能清晰区分。"""
+        self.assertNotEqual(ROW_BG_A, ROW_BG_B)
+        self.assertEqual(self._row_backgrounds(3), [ROW_BG_A, ROW_BG_B, ROW_BG_A])
+        self.assertEqual(self._row_backgrounds(4), [ROW_BG_A, ROW_BG_B, ROW_BG_A, ROW_BG_B])
+
+    def test_row_backgrounds_differ_from_card(self):
+        """两档底色都不等于卡片底，单独一条也不会糊在卡片上。"""
+        for bg in (ROW_BG_A, ROW_BG_B):
+            self.assertNotEqual(bg, CARD_BG)
 
     def test_html_renders_price_and_brief(self):
         result = SourceResult(source="demo", source_label="示例源")

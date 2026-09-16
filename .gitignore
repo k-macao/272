@@ -1,6 +1,7 @@
 # 运行时产物
 state/
 preview.html
+preview_*.html
 *.log
 
 # Python
