@@ -108,7 +108,7 @@ def _header(total: int, window_minutes: int, ref: datetime) -> str:
         f'border-left:5px solid {ACCENT};border-radius:8px;padding:12px 14px;'
         f'margin-bottom:12px;">'
         f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};'
-        f'letter-spacing:.5px;">章鱼 AI · A股情报速递</div>'
+        f'letter-spacing:.5px;">章鱼 AI · 个股雷达</div>'
         f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:6px;">'
         f'扫描时间 {stamp(ref)}（北京时间）</div>'
         f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:3px;">'
