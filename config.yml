@@ -55,8 +55,9 @@ pushplus_topics: oai.1
 # pushplus_topics: ["oai.1", "another-group"]
 # 留空则只推送给自己（单人模式）
 
-# DeepSeek 大模型（选填）：逐条生成证券专家分析（板块/概念/相似观点/多空概率/逻辑）
-# 未配置时新闻卡片使用同样六字段的规则化情景分析，并标明非统计预测，不假装用了 AI
+# DeepSeek 大模型（选填）：以「证券分析专家」身份逐条生成
+# 事件重塑 / 利弊挖掘 / 深度溯源 / 多维推演（含偏多偏空概率）/ 事实核查
+# 未配置时新闻卡片使用同样五模块的规则化情景分析，并标明非统计预测，不假装用了 AI
 deepseek_api_key: ""
 deepseek_model: "deepseek-v4-flash"
 
