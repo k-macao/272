@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import urlsplit
 
-from .models import Item, SourceResult, TimeQuality
+from .models import ANALYSIS_BRIEF, Item, SourceResult, TimeQuality
 from .timeutil import humanize, stamp
 
 # --- 配色 ------------------------------------------------------------------
@@ -182,9 +182,8 @@ def _row(item: Item, ref: datetime, *, index: int = 0) -> str:
         tags_html = f'<div style="margin-top:4px;">{chips}</div>'
 
     quote_html = _quote_line(item)
-    headline_html = _headline_block(item)
-    analysis_html = _analysis_block(item)
     related_html = _related_block(item)
+    ai_html = _ai_block(item)
 
     summary_html = ""
     analysis_text = (item.ai_analysis or "").strip()
@@ -199,29 +198,30 @@ def _row(item: Item, ref: datetime, *, index: int = 0) -> str:
         f'<div style="background:{_row_bg(index)};border-radius:6px;padding:8px 10px;'
         f'margin-top:8px;">'
         f'<div style="font-size:14px;">{title_html}</div>'
-        f"{headline_html}{quote_html}{summary_html}{related_html}{analysis_html}"
+        f"{quote_html}{summary_html}{related_html}"
         f'<div style="font-size:12px;margin-top:4px;">{meta}</div>'
-        f"{tags_html}"
+        # AI 那一块（一句人话 + 分析）合并后排在每条新闻最后
+        f"{tags_html}{ai_html}"
         f"</div>"
     )
 
 
-def _headline_block(item: Item) -> str:
-    """每条新闻开头的一句人话：投资专家口吻的大白话结论，全页最突出的一块。
+def _headline_line(text: str, label: str = "") -> str:
+    """一句人话：深底 + 荧光绿左边条，在合并块里当引子，一眼就能扫到。
 
-    深底 + 荧光绿左边条，一眼就能扫到；AI 生成标「AI 一句话」，
-    规则化兜底只标「一句话」，不假装用了大模型。
+    ``label`` 为空时不挂小标签（整块只剩这一句时，块级标签已经写过同样的话）。
     """
-    text = (item.ai_headline or "").strip()
-    if not text:
-        return ""
-    label = "AI 一句话" if item.ai_headline_from_model else "一句话"
-    return (
-        f'<div style="background:{HEADLINE_BG};border-left:4px solid {ACCENT};'
-        f'border-radius:5px;padding:7px 9px;margin-top:6px;">'
+    chip = (
         f'<span style="display:inline-block;background:{ACCENT};color:{HEADLINE_BG};'
         f'border-radius:3px;padding:1px 6px;margin-right:7px;font-size:11px;'
         f'font-weight:700;vertical-align:1px;">{label}</span>'
+        if label
+        else ""
+    )
+    return (
+        f'<div style="background:{HEADLINE_BG};border-left:4px solid {ACCENT};'
+        f'border-radius:5px;padding:7px 9px;margin-bottom:6px;">'
+        f"{chip}"
         f'<span style="font-size:14px;font-weight:700;color:{HEADLINE_TEXT};'
         f'line-height:1.6;">{html.escape(text)}</span></div>'
     )
@@ -326,9 +326,12 @@ def _related_block(item: Item) -> str:
     )
 
 
-#: 证券分析五模块标签；括号里是升级前的六字段，保证历史输出仍能被分行排版。
+#: 分析块里会分行排版的模块标签：证券五模块、总编简报三模块，
+#: 括号里最后是升级前的六字段，保证历史输出仍能被分行排版。
 _SECURITY_ANALYSIS_MARK = re.compile(
-    r"【(事件重塑|利弊挖掘|深度溯源|多维推演|事实核查|板块|概念|相似观点|看多|看空|逻辑)】"
+    r"【(事件重塑|利弊挖掘|深度溯源|多维推演|事实核查"
+    r"|核心快讯|关键要素|发展脉络"
+    r"|板块|概念|相似观点|看多|看空|逻辑)】"
 )
 #: 多维推演里的情景概率：偏多用 A 股红、偏空用绿，与涨跌幅的配色保持一致。
 _PROB_UP = re.compile(r"(偏多\s*)(\d{1,3}\s*[%％])")
@@ -350,6 +353,8 @@ def _security_analysis_html(value: str) -> str:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(value)
         name = match.group(1)
         body = value[match.end() : end].strip(" \n；;")
+        if not body:
+            continue  # 模块标签后面没内容就不显示这一行，不留空标签
         color = colors.get(name, NAVY_DEEP)
         body_html = html.escape(body).replace(chr(10), "<br>")
         body_html = _PROB_UP.sub(
@@ -359,7 +364,7 @@ def _security_analysis_html(value: str) -> str:
             rf'\1<span style="color:{GREEN};font-weight:700;">\2</span>', body_html
         )
         rows.append(
-            f'<div style="margin-top:{"4" if index else "1"}px;">'
+            f'<div style="margin-top:{"1" if len(rows) == 0 else "4"}px;">'
             f'<span style="display:inline-block;min-width:64px;color:{color};font-weight:700;'
             f'vertical-align:top;">【{name}】</span>'
             f'<span style="color:{NAVY};">{body_html}</span>'
@@ -368,20 +373,42 @@ def _security_analysis_html(value: str) -> str:
     return "".join(rows)
 
 
-def _analysis_block(item: Item) -> str:
-    """证券分析：AI 产出标「AI 分析」，规则化降级标「分析」，不假装。"""
+def _ai_block(item: Item) -> str:
+    """AI 那一块：一句人话 + 分析合并成一个块，排在每条新闻最后。
+
+    块级标签如实交代体裁与来源：模型五模块标「AI 分析」、模型总编简报标「AI 简报」、
+    规则化降级标「分析」，都不假装；块里那句人话另挂「AI 一句话」/「一句话」小标签。
+    两段都没内容时整块不显示 —— 兜底不凑字数。
+    """
+    headline = (item.ai_headline or "").strip()
     analysis = (item.ai_analysis or "").strip()
-    if not analysis:
+    body_html = _security_analysis_html(analysis).strip() if analysis else ""
+    if not headline and not body_html:
         return ""
-    label = "AI 分析" if item.ai_analysis_from_model else "分析"
+
+    headline_label = "AI 一句话" if item.ai_headline_from_model else "一句话"
+    if body_html:
+        if not item.ai_analysis_from_model:
+            label = "分析"  # 规则化兜底，不假装用了大模型
+        elif item.ai_analysis_kind == ANALYSIS_BRIEF:
+            label = "AI 简报"
+        else:
+            label = "AI 分析"
+    else:
+        label = headline_label  # 整块只剩一句人话，不必再挂一枚同样的小标签
+
+    rows = ""
+    if headline:
+        rows += _headline_line(headline, "" if not body_html else headline_label)
+    rows += body_html
     return (
-        f'<div style="font-size:13px;color:{NAVY};margin-top:5px;line-height:1.7;'
+        f'<div style="font-size:13px;color:{NAVY};margin-top:6px;line-height:1.7;'
         f'background:{SURFACE_ALT};border-radius:5px;padding:6px 8px;">'
         f'<div style="margin-bottom:4px;">'
         f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
         f'border-radius:3px;padding:1px 6px;font-size:11px;font-weight:700;">'
         f"{label}</span></div>"
-        f"{_security_analysis_html(analysis)}</div>"
+        f"{rows}</div>"
     )
 
 
@@ -1022,9 +1049,11 @@ def render_theme(analysis, *, ref: datetime | None = None) -> str:
     cards: list[str] = [_theme_header(analysis, ref), _theme_overview(analysis)]
     if analysis.all_profiles:
         cards.append(_theme_factor_card(analysis))
+    # 解读正文为空（大模型没返回、规则化也无话可说）时整卡不显示，不留空标题。
+    if (analysis.ai_report or "").strip():
+        cards.append(_theme_ai_card(analysis))
     cards.extend(
         [
-            _theme_ai_card(analysis),
             _theme_supervision_card(analysis),
             _theme_provenance_card(analysis),
             _theme_disclaimer_card(analysis),
@@ -1299,7 +1328,9 @@ def _theme_provenance_card(analysis) -> str:
     lines.extend(analysis.notes)
 
     body = "".join(
-        f'<div style="margin-top:3px;">· {html.escape(line)}</div>' for line in lines
+        f'<div style="margin-top:3px;">· {html.escape(line)}</div>'
+        for line in lines
+        if (line or "").strip()  # 空行不显示，不留一个孤零零的「·」
     )
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'

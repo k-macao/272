@@ -78,7 +78,8 @@ class FactorModel:
             "github-raw": "raw.githubusercontent 实时拉取",
             "cache": "本地缓存，上次自 GitHub 拉取",
         }.get(self.source, self.source)
-        return f"{self.repo}@{sha}{when} · Alpha158（{via}）"
+        # 来源未知时不留一对空括号，这一行只显示确实知道的部分
+        return f"{self.repo}@{sha}{when} · Alpha158" + (f"（{via}）" if via else "")
 
     def by_group(self) -> dict[str, list[Factor]]:
         out: dict[str, list[Factor]] = {}

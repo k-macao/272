@@ -429,7 +429,8 @@ class Agent:
             )
             log.info(
                 "情报增强：%d 条中现价 %d，本轮跨源印证 %d，外部报道/观点检索 %d 条/命中 %d 篇，"
-                "一句人话 AI %d/规则 %d，证券 AI 分析 %d，规则分析 %d",
+                "一句人话 AI %d/规则 %d，证券 AI 分析 %d，总编简报 %d，规则分析 %d，"
+                "分析不出不显示 %d 条",
                 stats.get("items", 0),
                 stats.get("quotes", 0),
                 stats.get("linked", 0),
@@ -438,7 +439,9 @@ class Agent:
                 stats.get("headline_ai", 0),
                 stats.get("headline_rule", 0),
                 stats.get("ai", 0),
+                stats.get("brief", 0),
                 stats.get("rule", 0),
+                stats.get("analysis_skipped", 0),
             )
         except Exception as exc:  # noqa: BLE001 - 增强失败不能丢掉已经校验过的情报
             log.warning("情报增强失败（不影响推送）：%s", exc)

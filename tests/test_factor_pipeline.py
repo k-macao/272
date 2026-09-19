@@ -500,6 +500,23 @@ class TestRuleBasedReport(PipelineTestCase):
         analysis = pipeline(self.tmp).run("人形机器人", ref=REF, use_ai=False)
         self.assertEqual(compliance.scan(rule_based_report(analysis)), [])
 
+    def test_factor_section_hidden_when_no_profile(self):
+        """一个标的都没算出因子：【因子要点】整节不显示，不留空标题。"""
+        from octopus.factor.market import MarketSnapshot
+        from octopus.factor.pipeline import ThemeAnalysis
+        from octopus.factor.qlib_repo import FactorModel
+
+        empty = ThemeAnalysis(
+            topic="储能", ref=REF, market=MarketSnapshot(topic="储能"), model=FactorModel()
+        )
+        report = rule_based_report(empty)
+        self.assertNotIn("【因子要点】", report)
+        self.assertNotIn("【横截面分布】", report)
+        # 其余如实交代数据不足的段落保留
+        self.assertIn("行情数据不足", report)
+        self.assertIn("【数据与口径】", report)
+        self.assertNotIn("Alpha158（）", report)  # 来源未知时不留空括号
+
 
 # ---------------------------------------------------------------------------
 class TestRenderTheme(PipelineTestCase):
@@ -528,6 +545,17 @@ class TestRenderTheme(PipelineTestCase):
         html = render_theme(self.analysis, ref=REF)
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;script&gt;", html)
+
+    def test_ai_card_hidden_when_report_is_empty(self):
+        """解读正文为空：整张卡不显示，不留一个只有标题的空壳。"""
+        self.assertIn("规则化因子解读", self.html)
+        self.analysis.ai_report = "   "
+        html = render_theme(self.analysis, ref=REF)
+        self.assertNotIn("规则化因子解读", html)
+        self.assertNotIn("DeepSeek AI 解读", html)
+        # 其余卡片照常
+        self.assertIn("数据溯源与口径", html)
+        self.assertIn("风险提示与免责声明", html)
 
     def test_shows_supervision_events(self):
         self.assertIn("问询关注", self.html)
