@@ -1,15 +1,15 @@
-"""情报条目增强：给每条新闻补上现价、找同一新闻的不同源头，再写 AI 分析。
+"""情报条目增强：补现价、匹配板块概念、检索同题报道/相似观点，再写证券分析。
 
 流程（渲染推送前、不影响时间校验与去重）：
 
 1. 从 extra / 标题 / 摘要里提取 A 股或转债代码（宁可少提，不可臆造）
 2. 批量取现价：东财 ulist 优先，失败或漏报的代码再降级 Yahoo Finance
-3. 多源印证（crossref）：先在本轮十个源之间互相匹配同一事件，再对最值得
-   核实的若干条做外部新闻检索（Google/Bing News RSS，仅保留带可验证发布
-   时间且标题对得上的结果）
-4. AI 分析：配置了 DeepSeek 则把「本条 + 其它源头报道」交给模型，写
-   ① 开头一句「人话」结论（投资专家口吻、大白话、不做方向判断）
-   ② 事件要点 / 多源印证 / 关注点；否则或调用失败时用规则化文本，并如实标注，
+3. 多源检索（crossref）：先在本轮十个源之间匹配同一事件，再对最值得核实的
+   若干条做外部新闻/观点检索（Google/Bing News RSS），收集同题报道与带可验证
+   时间的相似观点；只有公开标题/摘要时绝不假装读过全文
+4. 证券 AI 分析：配置了 DeepSeek 则把「事件 + 行情 + 板块/概念匹配 + 网上
+   交叉材料」交给模型，写 ① 开头一句人话结论 ② 板块、概念、相似观点、
+   看多/看空概率与传导逻辑；否则或调用失败时使用规则化情景分析，并如实标注，
    绝不假装用了 AI
 
 任何一步失败只让该条缺少现价/印证/改用规则分析，不会丢条目、不会拖垮整轮推送。
@@ -61,9 +61,11 @@ INDEX_ALIASES: tuple[tuple[str, str, str], ...] = (
 )
 
 _BANNED_ANALYSIS = ("买入", "卖出", "目标价", "立即建仓", "稳赚", "必涨", "马上买", "建议加仓", "建议减仓")
-#: 单一来源的条目，模型不得声称已获多方证实
+#: 没有同一事件事实报道作印证时，模型不得声称已获多方证实
 _OVERCLAIM = ("多方证实", "多家媒体证实", "多源证实", "已获证实", "多家权威媒体")
-ANALYSIS_LIMIT = 160
+# 六字段证券分析需要容纳板块、概念、观点、多空概率和完整传导链；仍设硬上限
+# 防止单条模型输出失控挤爆微信卡片。
+ANALYSIS_LIMIT = 520
 HEADLINE_LIMIT = 48
 AI_CHUNK_SIZE = 6
 AI_WORKERS = 3
@@ -89,6 +91,14 @@ class Quote:
 
 
 @dataclass(frozen=True)
+class MarketContext:
+    """由源字段与本地 A 股词典匹配出的行业/概念上下文，不调用大模型猜测。"""
+
+    sector: str = ""
+    concepts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class NewsReport:
     """模型对一条情报的两段产出：开头的一句人话 + 详细分析。"""
 
@@ -108,7 +118,7 @@ def enrich_news(
     crossref_max_gap_hours: float = 36.0,
     ref=None,
 ) -> dict[str, int]:
-    """就地给条目补现价、多源印证、一句人话与 AI 分析。返回计数，便于日志。"""
+    """就地补现价、多源观点、一句人话与证券分析。返回计数，便于日志。"""
     bag = [it for it in items if it is not None]
     stats = {
         "items": len(bag), "quotes": 0, "ai": 0, "rule": 0,
@@ -135,7 +145,7 @@ def enrich_news(
         if _attach_quote(item, tickers, quotes):
             stats["quotes"] += 1
 
-    # 多源印证：先本轮跨源匹配（离线），再外部检索（在线、可关）
+    # 多源材料：先本轮跨源匹配（离线），再检索同题报道/网上观点（在线、可关）
     from . import crossref
 
     try:
@@ -155,9 +165,9 @@ def enrich_news(
         stats["searched"] = search_stats.searched
         stats["external_hits"] = search_stats.hits
         if search_stats.disabled:
-            log.info("外部新闻检索本轮熔断：%s", "、".join(search_stats.disabled))
+            log.info("外部报道/观点检索本轮熔断：%s", "、".join(search_stats.disabled))
     except Exception as exc:  # noqa: BLE001
-        log.info("外部新闻检索失败（不影响推送）：%s", exc)
+        log.info("外部报道/观点检索失败（不影响推送）：%s", exc)
 
     _fill_analysis(bag, http=http, api_key=api_key, model=model)
     stats["ai"] = sum(1 for it in bag if it.ai_analysis_from_model)
@@ -278,6 +288,68 @@ def _name_index() -> tuple[list[tuple[str, str]], frozenset[str]]:
         pairs.sort(key=lambda p: len(p[0]), reverse=True)
         _NAME_INDEX = pairs
     return _NAME_INDEX, _BOARD_NAMES or frozenset()
+
+
+def market_context(item: Item) -> MarketContext:
+    """用源字段 + 内置成分词典识别行业板块和概念，识别不到就留空。
+
+    词典只用于归类，不代表公司当前仍属于某个动态指数，也不会把结果包装成
+    交易所/数据商的实时分类。模型收到的字段会明确标为“本地词典匹配”。
+    """
+    from .crossref import event_tags
+    from .factor.concepts import CONCEPTS, INDUSTRIES
+
+    tickers = extract_tickers(item)
+    codes = {ticker.code for ticker in tickers}
+    extra = item.extra or {}
+    source_industry = str(
+        extra.get("industry") or extra.get("industry_name") or extra.get("sector") or ""
+    ).strip()
+    if source_industry in ("*", "--", "-"):
+        source_industry = ""
+    tags = [str(tag).strip() for tag in (item.tags or []) if str(tag).strip()]
+    blob = " ".join(
+        [item.title or "", item.summary or "", source_industry, *tags]
+    )
+
+    def membership(table: dict[str, list[tuple[str, str]]], name: str) -> bool:
+        return any(code in codes for code, _stock in table.get(name, ()))
+
+    industry_scores: list[tuple[int, int, str]] = []
+    for order, name in enumerate(INDUSTRIES):
+        score = 0
+        if source_industry == name:
+            score = 120
+        elif name in tags:
+            score = 110
+        elif name in blob:
+            score = 90
+        elif membership(INDUSTRIES, name):
+            score = 40
+        if score:
+            industry_scores.append((-score, order, name))
+    industry_scores.sort()
+    sector = industry_scores[0][2] if industry_scores else source_industry
+
+    concept_scores: list[tuple[int, int, str]] = []
+    for order, name in enumerate(CONCEPTS):
+        score = 0
+        if name in tags:
+            score = 120
+        elif name in blob:
+            score = 100
+        elif membership(CONCEPTS, name):
+            score = 40
+        if score:
+            concept_scores.append((-score, order, name))
+    concept_scores.sort()
+    concepts = tuple(name for _score, _order, name in concept_scores[:3])
+
+    # 宏观新闻没有单一申万行业；明确写成全市场宏观影响，比硬套某一行业诚实。
+    events = set(event_tags(f"{item.title} {item.summary}"))
+    if not sector and events & {"宏观数据", "货币政策"}:
+        sector = "全市场（宏观）"
+    return MarketContext(sector=sector, concepts=concepts)
 
 
 # ---------------------------------------------------------------------------
@@ -415,19 +487,82 @@ def _num(value: object) -> float | None:
 # AI 分析（DeepSeek）/ 规则化分析（降级）
 # ---------------------------------------------------------------------------
 def rule_analysis(item: Item) -> str:
-    """规则化分析：多源印证情况 + 关注点。
+    """无大模型时的结构化证券情景分析。
 
-    不调用大模型，只把已知事实组织成一段话，卡片上标「分析」而非「AI」。
-    标题与源摘要已经在卡片上，这里不再复述，只补「其它源头怎么说」和「该核对什么」。
+    百分比是透明的事件类型规则权重，不伪装成统计模型；板块/概念来自本地词典，
+    网上观点只引用已检索到的公开标题。卡片因此仍完整展示用户要求的六个字段，
+    但标签保持「分析」而非「AI 分析」。
     """
     from . import crossref
 
-    corroboration = crossref.corroboration_summary(item)
-    focus = _rule_focus(item)
-    return "".join(p for p in (corroboration + "。", focus) if p)
+    context = market_context(item)
+    sector = context.sector or "未识别"
+    concepts = "、".join(context.concepts) or "未识别"
+    views = [rel for rel in item.related if rel.relation == "similar_viewpoint"]
+    if views:
+        samples = "；".join(
+            f"{crossref.describe_related(rel)}：{clip_brief(rel.title, 34)}"
+            for rel in views[:3]
+        )
+        if len({rel.source_label for rel in views}) < 2:
+            samples += "；观点样本不足（少于 2 个不同来源）"
+        if not any(rel.relation == "same_event" for rel in item.related):
+            samples += "；事件事实目前仍仅见原始来源"
+        viewpoint = samples
+    else:
+        viewpoint = crossref.corroboration_summary(item)
+        viewpoint += "；未检出可独立比较的网上观点，观点样本不足"
+
+    bull, bear, bull_reason, bear_reason, chain = _rule_scenario(item)
+    focus = _rule_focus(item).rstrip("。")
+    return (
+        f"【板块】{sector}；【概念】{concepts}；"
+        f"【相似观点】{viewpoint}；"
+        f"【看多】{bull}%：{bull_reason}；"
+        f"【看空】{bear}%：{bear_reason}；"
+        f"【逻辑】{chain}；验证点：{focus}。"
+        f"（规则情景权重，非统计预测）。"
+    )
 
 
-#: 事件类别 -> 一句人话（投资专家口吻，但不做方向判断、不给建议）。
+#: 事件类别 -> (看多概率, 看多理由, 看空理由, 传导链)。概率只表示短线事件影响权重。
+_RULE_SCENARIOS: tuple[tuple[frozenset[str], int, str, str, str], ...] = (
+    (frozenset({"风险警示"}), 15, "若风险处置快于预期，情绪可能短暂修复", "退市或持续经营不确定性会抬高风险折价", "风险警示 → 风险偏好下降 → 个股估值承压"),
+    (frozenset({"监管"}), 20, "调查结果若影响有限，不确定性有望收敛", "处罚与合规成本可能影响经营和估值", "监管事件 → 合规与经营不确定性上升 → 风险折价扩大"),
+    (frozenset({"问询"}), 35, "充分回复可消除部分信息疑虑", "回复不及预期可能继续压制风险偏好", "交易所问询 → 信息透明度接受检验 → 估值风险重定价"),
+    (frozenset({"减持"}), 30, "减持规模较小或提前结束可缓解供给压力", "新增股份供给可能形成阶段性卖压", "减持计划 → 流通筹码增加 → 短线供需承压"),
+    (frozenset({"诉讼"}), 30, "涉案影响有限时风险可能逐步出清", "潜在赔付与经营扰动会增加不确定性", "诉讼进展 → 现金流与经营风险变化 → 估值折价调整"),
+    (frozenset({"回购"}), 62, "真金白银回购可改善筹码预期并传递管理层信心", "规模、价格上限或执行进度不及预期会削弱信号", "回购计划 → 流通筹码与信心变化 → 个股风险偏好调整"),
+    (frozenset({"增持"}), 65, "股东或高管投入资金可增强信心信号", "增持规模偏小或执行不足时象征意义大于实质", "增持计划 → 内部人信号与筹码变化 → 个股预期调整"),
+    (frozenset({"分红"}), 60, "现金回报可增强股东回报预期", "盈利或现金流不足会削弱分红持续性", "分红方案 → 现金回报预期变化 → 高股息估值偏好调整"),
+    (frozenset({"订单"}), 63, "新增订单可能改善收入可见度", "签约到收入确认仍有执行、毛利和回款风险", "订单落地 → 收入与产能预期变化 → 公司及产业链预期调整"),
+    (frozenset({"业绩"}), 50, "若数据高于可比口径或预期，盈利预期可能上修", "若增长质量或持续性不足，估值可能承压", "业绩披露 → 盈利与现金流预期重估 → 个股及板块定价变化"),
+    (frozenset({"并购重组"}), 58, "协同与资产注入预期可能提升成长想象空间", "审批、估值、整合和业绩承诺均存在不确定性", "并购方案 → 资产与盈利结构预期变化 → 估值重定价"),
+    (frozenset({"再融资"}), 42, "募资投向若回报清晰，可能增强长期产能或现金实力", "股份摊薄与项目回报不确定性可能压制短线估值", "再融资 → 股本与资金用途变化 → 每股收益及估值调整"),
+    (frozenset({"货币政策"}), 58, "流动性边际改善通常有利于市场风险偏好", "落地规模不及预期或传导受阻会限制效果", "政策操作 → 资金价格与流动性变化 → 全市场估值偏好调整"),
+    (frozenset({"宏观数据"}), 50, "数据改善可能抬升增长和盈利预期", "数据走弱或与预期偏离可能压低风险偏好", "宏观数据 → 增长与政策预期变化 → 行业盈利和估值重估"),
+    (frozenset({"涨停", "拉升"}), 57, "强势价格行为显示短线资金关注度较高", "缺少基本面催化时拥挤交易与回撤风险同步上升", "价格异动 → 资金关注与筹码拥挤 → 短线波动放大"),
+    (frozenset({"跌停", "回撤"}), 35, "若无新增基本面利空，超跌后可能出现情绪修复", "弱势价格行为可能反映资金撤离或未披露风险", "价格异动 → 风险偏好与筹码供需恶化 → 短线波动放大"),
+)
+
+
+def _rule_scenario(item: Item) -> tuple[int, int, str, str, str]:
+    from .crossref import event_tags
+
+    tags = set(event_tags(f"{item.title} {item.summary}"))
+    for group, bull, bull_reason, bear_reason, chain in _RULE_SCENARIOS:
+        if tags & group:
+            return bull, 100 - bull, bull_reason, bear_reason, chain
+    return (
+        50,
+        50,
+        "现有事实尚不足以确认正向盈利或供需变化",
+        "信息未经充分交叉验证，仍有口径与后续进展风险",
+        "新闻披露 → 市场预期变化 → 等待经营数据或官方信息验证",
+    )
+
+
+#: 事件类别 -> 一句人话（投资专家口吻，但不做操作建议）。
 #: 未配置大模型或调用失败时用它兜底，卡片上标「一句话」而不是「AI 一句话」。
 RULE_HEADLINES: tuple[tuple[frozenset[str], str], ...] = (
     (
@@ -604,15 +739,38 @@ def parse_news_analyses(text: str) -> dict[int, str]:
     }
 
 
-def _acceptable(item: Item, text: str) -> bool:
-    """一句话与分析共用的合规红线。
+_SECURITY_FIELDS = ("【板块】", "【概念】", "【相似观点】", "【看多】", "【看空】", "【逻辑】")
 
-    荐股类措辞一律拒收；没有任何其它源头却声称「已获多方证实」的也拒收 ——
-    拒收后保留规则化文本，宁可朴素也不越线。
+
+def _probabilities_valid(text: str) -> bool:
+    """新六字段格式必须字段齐全、多空合计 100；无字段的历史格式继续兼容。"""
+    present = [field in text for field in _SECURITY_FIELDS]
+    if not any(present):
+        return True
+    if not all(present):
+        return False
+    bull = re.search(r"【看多】\s*(\d{1,3})\s*[%％]", text)
+    bear = re.search(r"【看空】\s*(\d{1,3})\s*[%％]", text)
+    if bull is None or bear is None:
+        return False
+    values = int(bull.group(1)), int(bear.group(1))
+    return all(0 <= value <= 100 for value in values) and sum(values) == 100
+
+
+def _acceptable(item: Item, text: str) -> bool:
+    """一句话与分析共用的合规/概率红线。
+
+    荐股类措辞一律拒收；没有同一事件的其它事实报道却声称「已获多方证实」也拒收；
+    （相似观点和同标的消息不能冒充事实印证。）新格式若六字段不完整，或多空
+    概率不合计 100，同样拒收。回退时保留规则化文本，
+    宁可朴素也不越线。
     """
     if not text or any(w in text for w in _BANNED_ANALYSIS):
         return False
-    return bool(item.related) or not any(w in text for w in _OVERCLAIM)
+    if not _probabilities_valid(text):
+        return False
+    fact_corroborated = any(rel.relation == "same_event" for rel in item.related)
+    return fact_corroborated or not any(w in text for w in _OVERCLAIM)
 
 
 def _fill_analysis(
@@ -641,23 +799,57 @@ def _fill_analysis(
 
     from concurrent.futures import ThreadPoolExecutor
 
-    from .ai import DeepSeekAI
+    from .ai import DeepSeekAI, NewsAnalysisEntry
 
     client = DeepSeekAI(api_key, model=model or "deepseek-v4-flash", http=http)
-    # 每条现在带着「其它源头报道」进 prompt，单次输入/输出都比以前的一句总结长，
-    # 所以块切小一点；块与块之间并发，整体耗时不比以前差。
+    # 每条会携带行情、板块概念和最多六条网上材料，输出也扩展为六字段；继续分块
+    # 并发，既控制单次上下文，又不让全量情报串行等待。
     chunk_size = AI_CHUNK_SIZE
     chunks = [items[start : start + chunk_size] for start in range(0, len(items), chunk_size)]
 
     def run_chunk(chunk: list[Item]) -> None:
-        entries = []
+        entries: list[NewsAnalysisEntry] = []
         for i, it in enumerate(chunk):
-            others = []
-            for rel in it.related[:4]:
+            materials: list[str] = []
+            for rel in it.related[:6]:
                 when = f"（{rel.published_at:%m-%d %H:%M}）" if rel.published_at else ""
-                flag = "" if rel.relation == "same_event" else "[同标的，未必同一事件]"
-                others.append(f"{crossref.describe_related(rel)}：{rel.title}{when}{flag}")
-            entries.append((i + 1, it.source_label, it.title, it.summary, others))
+                kind = {
+                    "same_event": "同一事件报道",
+                    "similar_viewpoint": "网上相似观点",
+                    "same_subject": "同标的消息，未必同一事件",
+                }.get(rel.relation, "待核对材料")
+                similarity = (
+                    f"，规则相关度 {rel.similarity:.0%}" if rel.similarity is not None else ""
+                )
+                material = (
+                    f"[{kind}{similarity}] {crossref.describe_related(rel)}：{rel.title}{when}"
+                )
+                if rel.summary:
+                    material += f"；搜索公开摘要：{rel.summary}"
+                materials.append(material)
+
+            context = market_context(it)
+            market_data = ""
+            if it.last_price is not None:
+                name_code = " ".join(
+                    part for part in ((it.price_name or "").strip(), (it.price_code or "").strip())
+                    if part
+                )
+                change = "" if it.price_change is None else f"，涨跌幅 {it.price_change:+.2f}%"
+                market_data = f"{name_code + ' ' if name_code else ''}现价 {it.last_price:.2f}{change}"
+            entries.append(
+                NewsAnalysisEntry(
+                    number=i + 1,
+                    source=it.source_label,
+                    title=it.title,
+                    summary=it.summary,
+                    related=tuple(materials),
+                    sector=context.sector,
+                    concepts=context.concepts,
+                    market_data=market_data,
+                    tags=tuple(str(tag) for tag in it.tags[:6]),
+                )
+            )
         try:
             ok, text = client.analyze_news(entries)
         except Exception as exc:  # noqa: BLE001

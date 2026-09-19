@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--verbose", "-v", action="store_true", help="输出调试日志")
     p.add_argument("--crossref", default="",
                    choices=["", "auto", "on", "off"],
-                   help="多源印证的外部新闻检索：auto（默认，连不上自动熔断）/ on / off（只做本轮跨源匹配）")
+                   help="同题报道/网上观点检索：auto（默认，连不上自动熔断）/ on / off（仅本轮跨源匹配）")
     # --- 手动主题分析推送 ------------------------------------------------
     p.add_argument("--manual", action="store_true",
                    help="手动模式：录入 AI 分析主题/内容并直接推送，跳过抓取")
@@ -223,10 +223,14 @@ def _print_summary(report) -> None:
                 bits.append(f"    现价 {item.price_name or item.price_code} {item.last_price:.2f}{chg}")
             for rel in item.related:
                 when = f" {rel.published_at:%m-%d %H:%M}" if rel.published_at else ""
-                note = "" if rel.relation == "same_event" else "（同标的，待核对）"
-                bits.append(f"    多源 {describe_related(rel)}：{rel.title[:50]}{when}{note}")
+                note = {
+                    "same_event": "",
+                    "similar_viewpoint": "（网上相似观点）",
+                    "same_subject": "（同标的，待核对）",
+                }.get(rel.relation, "（待核对）")
+                bits.append(f"    多源/观点 {describe_related(rel)}：{rel.title[:50]}{when}{note}")
             if not item.related and item.related_searched:
-                bits.append("    多源 单一来源（其它源与外部检索未见同一事件）")
+                bits.append("    多源/观点 单一来源（外部检索未见同题报道或相似观点）")
             if item.ai_analysis:
                 tag = "AI分析" if item.ai_analysis_from_model else "分析"
                 bits.append(f"    {tag} {item.ai_analysis}")

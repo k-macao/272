@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from octopus import crossref
 from octopus.crossref import (
     build_query,
+    build_search_query,
+    classify_external_result,
     classify_pair,
     corroboration_summary,
     event_tags,
@@ -197,6 +199,19 @@ class TestBatchLinking(unittest.TestCase):
         self.assertLessEqual(len(base.related), crossref.MAX_RELATED_PER_ITEM)
         self.assertTrue(all(r.relation == "same_event" for r in base.related))
 
+    def test_fact_reports_and_viewpoints_each_have_reserved_slots(self):
+        base = _item("cninfo", "巨潮资讯", "宁德时代拟回购股份")
+        incoming = [
+            RelatedNews(source_label=f"事实源{i}", title=f"同题报道{i}", relation="same_event")
+            for i in range(5)
+        ] + [
+            RelatedNews(source_label=f"观点源{i}", title=f"影响解读{i}", relation="similar_viewpoint")
+            for i in range(5)
+        ]
+        crossref._merge_related(base, incoming)
+        self.assertEqual(sum(r.relation == "same_event" for r in base.related), 3)
+        self.assertEqual(sum(r.relation == "similar_viewpoint" for r in base.related), 3)
+
     def test_classify_pair_direct(self):
         a = _item("a", "A", "某某公司收到证监会立案告知书", extra={"stock": "某某公司"})
         b = _item("b", "B", "某某公司被证监会立案调查", extra={"stock": "某某公司"})
@@ -209,6 +224,11 @@ class TestQueryAndCandidates(unittest.TestCase):
         item = _item("cninfo", "巨潮资讯", "宁德时代(300750) 关于回购公司股份的公告",
                      extra={"code": "300750", "stock": "宁德时代"})
         self.assertEqual(build_query(item), "宁德时代 回购")
+        combined = build_search_query(item)
+        self.assertIn("宁德时代 回购", combined)
+        self.assertIn("观点", combined)
+        self.assertIn("解读", combined)
+        self.assertIn("影响", combined)
 
     def test_query_falls_back_to_clean_title(self):
         item = _item("stats", "国家统计局", "2026年8月份居民消费价格同比上涨0.6%")
@@ -275,6 +295,35 @@ class TestRssAndFilters(unittest.TestCase):
             {"title": "锂电板块午后走强 - 某网", "url": "https://a/2", "pubdate": "Mon, 07 Sep 2026 02:00:00 GMT"},
         ]
         self.assertEqual(filter_results(item, rows, "bing", ref=REF, max_gap_hours=36), [])
+
+    def test_filter_classifies_viewpoint_and_keeps_public_summary(self):
+        item = _item(
+            "cninfo", "巨潮资讯", "宁德时代(300750) 关于回购公司股份的公告",
+            extra={"code": "300750", "stock": "宁德时代"},
+        )
+        sig = signature(item)
+        title = "宁德时代回购影响几何？券商解读三条逻辑"
+        self.assertEqual(classify_external_result(item, sig, title), "similar_viewpoint")
+        rows = [{
+            "title": title + " - 财联社",
+            "url": "https://a/view",
+            "pubdate": "Mon, 07 Sep 2026 02:00:00 GMT",
+            "summary": "<b>公开摘要</b>：关注执行规模与节奏。",
+        }]
+        out = filter_results(item, rows, "google", ref=REF, max_gap_hours=36)
+        self.assertEqual(out[0].relation, "similar_viewpoint")
+        self.assertIn("公开摘要", out[0].summary)
+        self.assertNotIn("<b>", out[0].summary)
+        self.assertGreater(out[0].similarity, 0)
+
+    def test_viewpoint_still_requires_same_subject_and_event(self):
+        item = _item(
+            "cninfo", "巨潮资讯", "宁德时代(300750) 关于回购公司股份的公告",
+            extra={"code": "300750", "stock": "宁德时代"},
+        )
+        sig = signature(item)
+        self.assertIsNone(classify_external_result(item, sig, "比亚迪回购影响解读"))
+        self.assertIsNone(classify_external_result(item, sig, "宁德时代储能业务影响解读"))
 
     def test_filter_drops_same_outlet(self):
         item = _item("eastmoney", "东方财富", "宁德时代：拟回购不超400亿元股份")

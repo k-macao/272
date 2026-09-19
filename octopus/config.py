@@ -37,7 +37,7 @@ DEFAULTS: dict[str, Any] = {
     # 主题因子分析的行情数据源：eastmoney（国内东财）/ yahoo（国外免费源，
     # Yahoo Finance，免注册无 Key）/ auto（东财优先，任一环节失败自动降级 Yahoo）
     "factor_market_source": "auto",
-    # --- 多源印证（定时情报每条新闻找不同源头）---------------------------
+    # --- 多源报道与网上相似观点（定时情报外部交叉检索）-------------------
     # crossref_mode: auto（默认，外部检索连不上自动熔断）/ on（强制每条都试）/ off（只做本轮跨源匹配，不联网检索）
     "crossref_mode": "auto",
     # 每轮最多对多少条做外部新闻检索（每条 1-2 个 RSS 请求，控制耗时）

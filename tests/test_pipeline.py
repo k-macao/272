@@ -290,6 +290,13 @@ class TestRender(unittest.TestCase):
         ):
             self.assertNotIn(text, html)
 
+    def test_footer_explains_directional_probabilities(self):
+        html = render_html([], total=0, window_minutes=180, ref=REF,
+                           failures=[], degraded=[])
+        self.assertIn("事件情景权重", html)
+        self.assertIn("不是统计预测或收益承诺", html)
+        self.assertIn("不构成投资建议", html)
+
     def test_failures_listed_in_footer(self):
         broken = SourceResult(source="b", source_label="坏源", ok=False, error="timeout")
         html = render_html([], total=0, window_minutes=180, ref=REF,
