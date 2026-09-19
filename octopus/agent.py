@@ -74,7 +74,7 @@ class Agent:
                     groups=[],
                     results=[],
                     html="",
-                    title=f"免打扰暂停（至次日 {self.config.quiet_end}）",
+                    title=f"免打扰暂停（至 {self.config.quiet_end}）",
                     ref=ref,
                     skipped="quiet",
                 )
