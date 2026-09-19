@@ -13,9 +13,9 @@ DEFAULTS: dict[str, Any] = {
     # 抓取间隔 30 分钟，窗口放宽到 180 分钟，配合去重避免边界漏推
     "window_minutes": 180,
     "interval_minutes": 30,
-    # 夜间免打扰（北京时间）：quiet_start 之后到次日 quiet_end 之前
+    # 夜间免打扰（北京时间）：quiet_start 之后到 quiet_end 之前
     # 暂停抓取与推送；任一端留空或两端相同即关闭。
-    "quiet_start": "23:00",
+    "quiet_start": "02:00",
     "quiet_end": "07:00",
     # 条数上限一律 0 = 不限：一条推送包含全部通过时间校验的抓取内容。
     # 代码兜底默认也遵循这个语义；想限量时在 config.yml 里填正整数。
@@ -55,7 +55,7 @@ class Config:
     interval_minutes: int = 30
     # 免打扰时刻允许 int，是因为 PyYAML 会把未加引号的 23:00
     # 解析成六十进制整数 1380（timeutil.parse_clock 会识别回来）
-    quiet_start: str | int = "23:00"   # 免打扰开始（北京时间），跨夜到 quiet_end
+    quiet_start: str | int = "02:00"   # 免打扰开始（北京时间），到 quiet_end 结束
     quiet_end: str | int = "07:00"     # 免打扰结束（起床），留空/与 start 相同 = 关闭
     max_items_per_source: int = 0  # 0 = 单源不限条数
     max_items_total: int = 0       # 0 = 整条推送不限总条数
