@@ -1,21 +1,23 @@
-"""多源印证：给每条情报寻找「同一新闻在其它源头的报道」。
+"""多源检索：给每条情报寻找同一事件报道与网上相似观点。
 
-AI 分析不能只看一条标题就下评论 —— 先找到同一事件的不同源头，再评论。
-分两步，任何一步失败都只让该条少几条印证，不丢条目、不拖垮推送：
+证券分析不能只看一条标题就下结论 —— 先找不同源头的事实报道，再找围绕
+同一标的/事件的解读、影响分析或机构观点，最后才交给 AI 做多空情景分析。
+分两步，任何一步失败都只让该条少几条证据，不丢条目、不拖垮推送：
 
 1. **本轮跨源匹配（离线）**：十个抓取源同一轮抓回来的条目里，找出报道
    同一事件的其它源（例如巨潮的回购公告 ↔ 证券之星的异动快报 ↔ 东财快讯）。
    判定依据是「共同标的 + 共同事件词」或标题字符二元组高度重合，不用大模型。
-2. **外部新闻检索（在线，可关）**：用 Google News / Bing News 的 RSS 检索
-   同一事件在证券时报、财联社、新浪财经等媒体上的报道。检索结果同样过时间
-   校验：没有发布时间、时间在未来、与原条目间隔过久的一律丢弃；标题与原
-   条目对不上的也丢弃（搜索引擎的噪音不算印证）。
+2. **外部新闻/观点检索（在线，可关）**：用 Google News / Bing News 的 RSS
+   组合检索「标的 + 事件 + 观点/解读/影响」，同时收集同题报道与相似观点。
+   结果必须有可验证发布时间、不能来自未来或超出事件窗口，且标题必须与标的/
+   事件相关；只有搜索摘要时就只保存摘要，绝不假装读取过文章全文。
 
-原则与主流程一致：**宁可少列，不可凑数**。找不到就如实标「单一来源」。
+原则与主流程一致：**宁可少列，不可凑数**。找不到就如实标明观点证据不足。
 """
 
 from __future__ import annotations
 
+import html
 import logging
 import re
 import threading
@@ -76,9 +78,20 @@ ENGINE_LABELS = {"google": "Google News", "bing": "Bing News"}
 SAME_EVENT_OVERLAP = 0.45      # 无共同标的时，仅凭标题重合判定同一事件
 TICKER_EVENT_OVERLAP = 0.30    # 有共同标的时，标题重合到这个程度也算同一事件
 EXTERNAL_OVERLAP = 0.40        # 外部检索结果与原条目的标题重合下限
+VIEWPOINT_OVERLAP = 0.22       # 有标的/事件词时，观点标题允许比同题报道更低的字面重合
 MIN_SHARED_BIGRAMS = 3
-MAX_RELATED_PER_ITEM = 4
+MAX_RELATED_PER_ITEM = 6
+MAX_EVENT_REPORTS = 3
+MAX_VIEWPOINTS = 3
 MAX_SUBJECT_GAP = timedelta(hours=3)
+
+#: 标题出现这些词时，才允许把外部结果归类为「相似观点」。这避免仅因搜索词
+#: 命中同一家公司，就把无关快讯塞给模型当观点证据。
+VIEWPOINT_WORDS: tuple[str, ...] = (
+    "观点", "解读", "点评", "影响", "怎么看", "如何看", "机会", "风险",
+    "逻辑", "研判", "展望", "机构", "券商", "研报", "分析师", "预期",
+    "看好", "谨慎", "利好", "利空", "催化", "估值",
+)
 
 _PUNCT = re.compile(r"[\s\u3000，,。．.、；;：:！!？?“”\"'‘’（）()【】\[\]《》<>〈〉「」『』—\-–_|｜/\\·•…~～*#@&%+=]+")
 _CODE_IN_TEXT = re.compile(r"(?<!\d)\d{6}(?:\.(?:SH|SZ|SS|BJ))?(?!\d)", re.I)
@@ -264,7 +277,11 @@ def _close_in_time(a: Item, b: Item) -> bool:
 
 
 def _merge_related(item: Item, incoming: Iterable[RelatedNews]) -> None:
-    """去重合并，同一事件排前面，总数封顶。"""
+    """去重合并，并为事实报道和相似观点各保留席位。
+
+    若同题转载很多，不能让它们占满上限、把用户真正需要的观点全部挤掉；反之
+    观点标题很多时，也至少保留同一事件的事实印证。最后再用规则相关度排序。
+    """
     seen_urls = {r.url for r in item.related if r.url}
     seen_titles = {normalize_title(r.title) for r in item.related}
     for rel in incoming:
@@ -275,8 +292,25 @@ def _merge_related(item: Item, incoming: Iterable[RelatedNews]) -> None:
         if rel.url:
             seen_urls.add(rel.url)
         seen_titles.add(key)
-    item.related.sort(key=lambda r: (0 if r.relation == "same_event" else 1, 0 if r.via == "batch" else 1))
-    del item.related[MAX_RELATED_PER_ITEM:]
+
+    rank = {"same_event": 0, "similar_viewpoint": 1, "same_subject": 2}
+    item.related.sort(
+        key=lambda r: (
+            rank.get(r.relation, 3),
+            0 if r.via == "batch" else 1,
+            -(r.similarity or 0.0),
+            -(r.published_at.timestamp() if r.published_at else 0.0),
+        )
+    )
+    ordered = list(item.related)
+    events = [r for r in ordered if r.relation == "same_event"][:MAX_EVENT_REPORTS]
+    views = [r for r in ordered if r.relation == "similar_viewpoint"][:MAX_VIEWPOINTS]
+    selected = events + views
+    selected_ids = {id(r) for r in selected}
+    # 先给事实/观点各预留最多三个位置；某一类不足时再按原排序补空位，且同标的
+    # 消息始终排在事实报道和观点之后。
+    selected.extend(r for r in ordered if id(r) not in selected_ids)
+    item.related[:] = selected[:MAX_RELATED_PER_ITEM]
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +325,7 @@ class SearchStats:
     disabled: list[str] = field(default_factory=list)
 
     def line(self) -> str:
-        bits = [f"外部检索 {self.searched} 条", f"命中 {self.hits} 篇/{self.items_with_hits} 条"]
+        bits = [f"外部报道/观点检索 {self.searched} 条", f"命中 {self.hits} 篇/{self.items_with_hits} 条"]
         if self.disabled:
             bits.append("已熔断 " + "、".join(ENGINE_LABELS.get(e, e) for e in self.disabled))
         return "，".join(bits)
@@ -359,7 +393,9 @@ def search_external(
     stats_lock = threading.Lock()
 
     def work(item: Item) -> tuple[Item, list[RelatedNews], bool]:
-        query = build_query(item)
+        # 一次组合查询同时寻找事实报道与观点，仍保持每个引擎每条只发一个请求，
+        # 避免为了“找观点”把网络请求和等待时间翻倍。
+        query = build_search_query(item)
         if not query:
             return item, [], False
         attempted = False
@@ -424,7 +460,7 @@ def pick_candidates(items: list[Item], max_items: int) -> list[Item]:
 
 
 def build_query(item: Item) -> str:
-    """检索词：标的名 + 事件词 最稳；否则用清洗后的标题。"""
+    """基础检索词：标的名 + 事件词 最稳；否则用清洗后的标题。"""
     sig = signature(item)
     name = ""
     for cand in sorted(sig.names, key=len, reverse=True):
@@ -446,8 +482,23 @@ def build_query(item: Item) -> str:
     return title[:30].strip()
 
 
+def build_search_query(item: Item) -> str:
+    """外部组合查询：基础事件词 + 观点意图。
+
+    Google News 与 Bing News 都接受基础 OR 表达式；过滤层仍会严格核验标的、
+    事件和发布时间，因此搜索可以适度扩召回，不能把噪音直接交给模型。
+    """
+    base = build_query(item)
+    if not base:
+        return ""
+    sig = signature(item)
+    if sig.subjects or sig.events:
+        return f"{base} (观点 OR 解读 OR 影响 OR 研报)"
+    return base
+
+
 def fetch_engine(http: Http, engine: str, query: str, *, timeout: float) -> list[dict]:
-    """拉一个引擎的 RSS 并解析为 [{title, url, source, pubdate}]。网络错误抛 FetchError。"""
+    """拉一个引擎的 RSS 并解析标题、链接、来源、时间与公开摘要。网络错误抛 FetchError。"""
     if engine == "google":
         url = (
             f"{GOOGLE_NEWS_RSS}?q={quote_plus(query + ' when:2d')}"
@@ -476,7 +527,9 @@ def parse_rss(text: str) -> list[dict]:
         for node in root.iter():
             if _local(node.tag) != "item":
                 continue
-            row = {"title": "", "url": "", "source": "", "pubdate": ""}
+            row = {
+                "title": "", "url": "", "source": "", "pubdate": "", "summary": ""
+            }
             for child in node:
                 name = _local(child.tag).lower()
                 value = (child.text or "").strip()
@@ -486,6 +539,8 @@ def parse_rss(text: str) -> list[dict]:
                     row["url"] = value or (child.attrib.get("href") or "")
                 elif name == "pubdate":
                     row["pubdate"] = value
+                elif name in ("description", "summary"):
+                    row["summary"] = _clean_search_summary(value)
                 elif name == "source":
                     row["source"] = value
                     row.setdefault("source_url", child.attrib.get("url", ""))
@@ -502,8 +557,25 @@ def parse_rss(text: str) -> list[dict]:
 
         title = pick("title")
         if title:
-            rows.append({"title": title, "url": pick("link"), "source": pick("source"), "pubdate": pick("pubDate")})
+            rows.append(
+                {
+                    "title": title,
+                    "url": pick("link"),
+                    "source": pick("source"),
+                    "pubdate": pick("pubDate"),
+                    "summary": _clean_search_summary(pick("description") or pick("summary")),
+                }
+            )
     return rows
+
+
+def _clean_search_summary(value: str, limit: int = 220) -> str:
+    """把 RSS 的公开摘要压成纯文本；不抓正文、不补写缺失内容。"""
+    text = html.unescape(_XML_TAG.sub(" ", value or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > limit:
+        text = text[:limit].rstrip("，,；;、 ") + "…"
+    return text
 
 
 def _local(tag: object) -> str:
@@ -537,25 +609,87 @@ def filter_results(
         if item.published_at is not None and abs(published - item.published_at) > max_gap:
             continue
 
-        if same_outlet(item, publisher, str(row.get("url") or "")):
+        result_url = str(row.get("url") or "").strip()
+        if result_url and urlsplit(result_url).scheme.lower() not in ("http", "https"):
+            continue  # 外部材料只接受可点击的 Web 链接，拒绝 javascript:/data: 等协议
+        if same_outlet(item, publisher, result_url):
             continue  # 同一家源头不算「不同源头」
         if normalize_title(title) == own_title_key and not publisher:
             continue
 
-        if not is_relevant(item, sig, title):
+        public_summary = _clean_search_summary(str(row.get("summary") or ""))
+        evidence_text = f"{title} {public_summary}".strip()
+        relation = classify_external_result(item, sig, evidence_text)
+        if relation is None:
             continue
 
         out.append(
             RelatedNews(
                 source_label=publisher or ENGINE_LABELS.get(engine, engine),
                 title=title,
-                url=str(row.get("url") or ""),
+                url=result_url,
                 published_at=published,
-                relation="same_event",
+                relation=relation,
                 via=engine,
+                summary=public_summary,
+                similarity=external_similarity(item, sig, evidence_text),
             )
         )
     return out
+
+
+def classify_external_result(item: Item, sig: Signature, title: str) -> str | None:
+    """把外部结果分成同题事实报道或相似观点；噪音返回 ``None``。
+
+    带「解读/影响/研报」等明确观点信号的结果优先归为相似观点，即便标题也
+    复述了同一事件。这样模型能区分“事实被多家转载”和“存在多种分析视角”。
+    """
+    if is_similar_viewpoint(item, sig, title):
+        return "similar_viewpoint"
+    if is_relevant(item, sig, title):
+        return "same_event"
+    return None
+
+
+def is_similar_viewpoint(item: Item, sig: Signature, title: str) -> bool:
+    """结果是否是围绕本事件的观点/解读，而非只有同一公司名的无关文章。"""
+    if not any(word in (title or "") for word in VIEWPOINT_WORDS):
+        return False
+
+    other_events = set(event_tags(title))
+    shared_event = bool(set(sig.events) & other_events)
+    overlap, shared = title_overlap(
+        strip_subjects(item.title, sig.subjects), strip_subjects(title, sig.subjects)
+    )
+
+    if sig.names or sig.codes:
+        has_subject = any(name in title for name in sig.names if len(name) >= 2) or any(
+            code in title for code in sig.codes
+        )
+        if not has_subject:
+            return False
+        # 已知事件时必须继续命中事件词或保留一定标题重合，不能只靠公司名。
+        if sig.events:
+            return shared_event or (overlap >= VIEWPOINT_OVERLAP and shared >= 2)
+        return overlap >= EXTERNAL_OVERLAP and shared >= MIN_SHARED_BIGRAMS
+
+    # 宏观/行业事件常没有单一证券名称，此时共同事件词还不够，至少再有少量
+    # 标题字面交集，避免把同一天所有“政策解读”混为一谈。
+    if sig.events and shared_event:
+        return overlap >= VIEWPOINT_OVERLAP and shared >= 2
+    return overlap >= EXTERNAL_OVERLAP and shared >= MIN_SHARED_BIGRAMS
+
+
+def external_similarity(item: Item, sig: Signature, title: str) -> float:
+    """规则相关度（0~1）：标题重合为底，标的/事件共同命中时加权。"""
+    overlap, _shared = title_overlap(item.title, title)
+    subject = bool(
+        any(name in title for name in sig.names if len(name) >= 2)
+        or any(code in title for code in sig.codes)
+    )
+    event = bool(set(sig.events) & set(event_tags(title)))
+    score = overlap * 0.65 + (0.2 if subject else 0.0) + (0.15 if event else 0.0)
+    return round(max(0.0, min(1.0, score)), 3)
 
 
 def is_relevant(item: Item, sig: Signature, title: str) -> bool:
@@ -628,15 +762,22 @@ def describe_related(rel: RelatedNews) -> str:
 
 
 def corroboration_summary(item: Item) -> str:
-    """一句话说明印证情况，供规则化分析与日志使用。"""
+    """一句话说明事实印证与观点样本情况，供规则化分析与日志使用。"""
     same = [r for r in item.related if r.relation == "same_event"]
+    views = [r for r in item.related if r.relation == "similar_viewpoint"]
     subj = [r for r in item.related if r.relation == "same_subject"]
+    bits: list[str] = []
     if same:
         names = "、".join(dict.fromkeys(describe_related(r) for r in same))
-        return f"另有 {len(same)} 个源头报道同一事件（{names}），可交叉核对"
+        bits.append(f"另有 {len(same)} 个源头报道同一事件（{names}）")
+    if views:
+        names = "、".join(dict.fromkeys(describe_related(r) for r in views))
+        bits.append(f"检出 {len(views)} 条网上相似观点（{names}）")
+    if bits:
+        return "；".join(bits) + "，可交叉比较"
     if subj:
         names = "、".join(dict.fromkeys(describe_related(r) for r in subj))
         return f"本轮另见 {len(subj)} 条同标的消息（{names}），是否同一事件待核对"
     if item.related_searched:
-        return "本轮其它源与外部检索均未见同一事件的其它报道，暂属单一来源"
-    return "本轮其它源未见同一事件报道（未做外部检索），暂属单一来源"
+        return "本轮其它源与外部检索均未见同题报道或相似观点，暂属单一来源、证据仍不足"
+    return "本轮其它源未见同题报道，且未做外部检索（含观点），暂属单一来源、证据仍不足"

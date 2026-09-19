@@ -20,6 +20,7 @@ from octopus.enrich import (
     enrich_news,
     extract_tickers,
     fetch_quotes,
+    market_context,
     parse_news_analyses,
     parse_news_reports,
     rule_analysis,
@@ -214,6 +215,22 @@ class TestAnalysis(unittest.TestCase):
         self.assertIn("统计局", rule_analysis(_item("7月 CPI 同比上涨0.5%")))
         self.assertIn("盘中信号", rule_analysis(_item("某股快速拉升")))
 
+    def test_rule_analysis_has_required_securities_fields_and_probabilities(self):
+        text = rule_analysis(_item("宁德时代(300750)拟回购股份"))
+        for field in ("【板块】", "【概念】", "【相似观点】", "【看多】", "【看空】", "【逻辑】"):
+            self.assertIn(field, text)
+        self.assertIn("【看多】62%", text)
+        self.assertIn("【看空】38%", text)
+        self.assertIn("非统计预测", text)
+
+    def test_market_context_uses_local_sector_and_concept_dictionary(self):
+        context = market_context(_item("宁德时代(300750)拟回购股份"))
+        self.assertEqual(context.sector, "电力设备")
+        self.assertIn("锂电池", context.concepts)
+        self.assertLessEqual(len(context.concepts), 3)
+        macro = market_context(_item("央行宣布降准"))
+        self.assertEqual(macro.sector, "全市场（宏观）")
+
     def test_parse_numbered_variants(self):
         text = "1. 宁德时代拟回购\n2、嘉美包装首板封死\n【3】北向资金净流入\n4: 创业板指走强"
         mapping = parse_news_analyses(text)
@@ -299,6 +316,65 @@ class TestAnalysis(unittest.TestCase):
         }
         enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
         self.assertFalse(item.ai_analysis_from_model)
+
+    def test_viewpoint_does_not_count_as_factual_corroboration(self):
+        item = _item("某公司拟回购")
+        item.related.append(
+            RelatedNews(
+                source_label="某媒体", title="回购影响解读", relation="similar_viewpoint"
+            )
+        )
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+        http.post_json.return_value = {
+            "choices": [{"message": {"content": "1. 该回购事实已获多方证实。"}}]
+        }
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertFalse(item.ai_analysis_from_model)
+
+    def test_ai_probability_fields_must_sum_to_one_hundred(self):
+        item = _item("宁德时代拟回购")
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+        invalid = (
+            "1. 分析：【板块】电力设备；【概念】锂电池；【相似观点】观点样本不足；"
+            "【看多】70%：回购；【看空】40%：执行风险；【逻辑】回购到风险偏好。"
+        )
+        http.post_json.return_value = {"choices": [{"message": {"content": invalid}}]}
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertFalse(item.ai_analysis_from_model)
+        self.assertIn("【看多】62%", item.ai_analysis)  # 回退透明规则权重
+
+    def test_ai_partial_securities_fields_are_rejected(self):
+        item = _item("宁德时代拟回购")
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+        partial = (
+            "1. 分析：【板块】电力设备；【相似观点】样本不足；"
+            "【看多】58%：信心改善；【看空】42%：执行待验证；【逻辑】回购到预期。"
+        )
+        http.post_json.return_value = {"choices": [{"message": {"content": partial}}]}
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertFalse(item.ai_analysis_from_model)
+        self.assertIn("【概念】", item.ai_analysis)
+
+    def test_ai_valid_probability_fields_are_kept(self):
+        item = _item("宁德时代拟回购")
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+        valid = (
+            "1. 分析：【板块】电力设备；【概念】锂电池；【相似观点】观点样本不足；"
+            "【看多】58%：回购改善信心；【看空】42%：执行规模待验证；"
+            "【逻辑】回购计划→筹码预期→风险偏好；目前仅见单一来源。"
+        )
+        http.post_json.return_value = {"choices": [{"message": {"content": valid}}]}
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertTrue(item.ai_analysis_from_model)
+        self.assertIn("【看多】58%", item.ai_analysis)
 
     def test_quote_failure_does_not_drop_item(self):
         item = _item("宁德时代(300750)拟回购")
@@ -493,6 +569,7 @@ class TestRenderNewsEnrichment(unittest.TestCase):
         self.assertIn("&lt;script&gt;", html)
         self.assertNotIn("<img", html)
         self.assertNotIn("<b>x</b>", html)
+        self.assertNotIn("javascript:", html)
 
     def test_one_liner_highlighted_at_top_of_item(self):
         """一句人话排在现价 / 多源 / AI 分析之前，且用深底高亮。"""
@@ -529,6 +606,21 @@ class TestRenderNewsEnrichment(unittest.TestCase):
         html = self._html(item)
         self.assertNotIn("<script>", html)
         self.assertIn("&lt;script&gt;", html)
+
+    def test_structured_securities_analysis_is_split_into_readable_rows(self):
+        item = _item("宁德时代拟回购")
+        item.ai_analysis = (
+            "【板块】电力设备；【概念】锂电池；【相似观点】样本不足；"
+            "【看多】58%：信心改善；【看空】42%：执行待验证；【逻辑】回购→筹码→风险偏好。"
+        )
+        item.ai_analysis_from_model = True
+        html = self._html(item)
+        for label in ("【板块】", "【概念】", "【相似观点】", "【看多】", "【看空】", "【逻辑】"):
+            self.assertIn(label, html)
+        self.assertIn("58%：信心改善", html)
+        self.assertIn("42%：执行待验证", html)
+        self.assertIn("#a63a2b", html)  # 看多：A 股红
+        self.assertIn("#2c6b4f", html)  # 看空：绿
 
     def test_down_move_uses_green(self):
         item = _item("某股跳水")

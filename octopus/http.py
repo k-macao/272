@@ -59,7 +59,7 @@ class Http:
         retries: int | None = None,
     ) -> requests.Response:
         """GET 一次。``timeout`` / ``retries`` 可按调用覆盖实例默认值 ——
-        多源印证的外部检索属于"锦上添花"，用更短的超时、不重试，
+        同题报道/网上观点的外部检索属于"锦上添花"，用更短的超时、不重试，
         不能拖慢主流程。"""
         timeout = self.timeout if timeout is None else timeout
         retries = self.retries if retries is None else max(0, int(retries))

@@ -266,7 +266,7 @@ def _quote_line(item: Item) -> str:
 
 
 def _related_block(item: Item) -> str:
-    """多源印证：列出同一新闻在其它源头的报道；没有就如实标「单一来源」。"""
+    """列出同题报道与网上相似观点；没有就如实标明证据不足。"""
     from .crossref import describe_related
 
     related = list(item.related or [])
@@ -277,39 +277,86 @@ def _related_block(item: Item) -> str:
             f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:4px;">'
             f'<span style="display:inline-block;border:1px solid {BORDER};color:{NAVY_SOFT};'
             f'border-radius:3px;padding:0 5px;margin-right:6px;font-size:11px;">单一来源</span>'
-            f"其它源与外部检索暂未见同一事件的报道</div>"
+            f"其它源与外部检索暂未见同题报道或相似观点</div>"
         )
 
     same = sum(1 for r in related if r.relation == "same_event")
-    head_label = f"多源 {same}" if same else "同标的"
+    views = sum(1 for r in related if r.relation == "similar_viewpoint")
+    labels = ([f"多源 {same}"] if same else []) + ([f"观点 {views}"] if views else [])
+    head_label = " · ".join(labels) or "同标的"
     rows: list[str] = []
     for rel in related:
         label = html.escape(describe_related(rel))
         title = html.escape(rel.title)
-        if rel.url:
+        parsed_url = urlsplit(rel.url) if rel.url else None
+        safe_url = rel.url if parsed_url and parsed_url.scheme.lower() in ("http", "https") else ""
+        if safe_url:
             title = (
-                f'<a href="{html.escape(rel.url, quote=True)}" '
+                f'<a href="{html.escape(safe_url, quote=True)}" '
                 f'style="color:{NAVY};text-decoration:none;">{title}</a>'
             )
         when = f"{rel.published_at:%m-%d %H:%M}" if rel.published_at else ""
-        note = "" if rel.relation == "same_event" else "（同标的，待核对）"
+        if rel.relation == "similar_viewpoint":
+            score = f" · 相关度 {rel.similarity:.0%}" if rel.similarity is not None else ""
+            note = f"（相似观点{score}）"
+        elif rel.relation == "same_event":
+            note = ""
+        else:
+            note = "（同标的，待核对）"
+        summary = ""
+        if rel.summary:
+            snippet = rel.summary[:120].rstrip("，,；;、 ") + ("…" if len(rel.summary) > 120 else "")
+            summary = (
+                f'<div style="color:{NAVY_SOFT};font-size:11px;margin-left:10px;">'
+                f"公开摘要：{html.escape(snippet)}</div>"
+            )
         rows.append(
             f'<div style="margin-top:2px;">'
             f'<span style="color:{NAVY_SOFT};">· {label}</span> {title}'
-            f'<span style="color:{NAVY_SOFT};font-size:11px;"> {when}{note}</span></div>'
+            f'<span style="color:{NAVY_SOFT};font-size:11px;"> {when}{note}</span>'
+            f"{summary}</div>"
         )
     return (
         f'<div style="font-size:12px;color:{NAVY};margin-top:4px;line-height:1.6;">'
         f'<span style="display:inline-block;background:{ACCENT_WASH};color:{GREEN};'
         f'border-radius:3px;padding:0 5px;margin-right:4px;font-size:11px;font-weight:700;">'
         f"{head_label}</span>"
-        f'<span style="color:{NAVY_SOFT};font-size:11px;">同一新闻的其它源头</span>'
+        f'<span style="color:{NAVY_SOFT};font-size:11px;">同题报道与网上相似观点</span>'
         f"{''.join(rows)}</div>"
     )
 
 
+_SECURITY_ANALYSIS_MARK = re.compile(r"【(板块|概念|相似观点|看多|看空|逻辑)】")
+
+
+def _security_analysis_html(value: str) -> str:
+    """把证券分析六字段排成窄屏可扫读的行；旧自由文本仍按原样安全转义。"""
+    matches = list(_SECURITY_ANALYSIS_MARK.finditer(value or ""))
+    if not matches:
+        return html.escape(value).replace("\n", "<br>")
+
+    colors = {"看多": RED, "看空": GREEN}
+    rows: list[str] = []
+    prefix = value[: matches[0].start()].strip(" \n；;")
+    if prefix:
+        rows.append(f'<div style="margin-bottom:3px;">{html.escape(prefix)}</div>')
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(value)
+        name = match.group(1)
+        body = value[match.end() : end].strip(" \n；;")
+        color = colors.get(name, NAVY_DEEP)
+        rows.append(
+            f'<div style="margin-top:{"4" if index else "1"}px;">'
+            f'<span style="display:inline-block;min-width:48px;color:{color};font-weight:700;'
+            f'vertical-align:top;">【{name}】</span>'
+            f'<span style="color:{NAVY};">{html.escape(body).replace(chr(10), "<br>")}</span>'
+            f"</div>"
+        )
+    return "".join(rows)
+
+
 def _analysis_block(item: Item) -> str:
-    """AI 分析：大模型产出标「AI 分析」，规则化降级标「分析」，不假装。"""
+    """证券分析：AI 产出标「AI 分析」，规则化降级标「分析」，不假装。"""
     analysis = (item.ai_analysis or "").strip()
     if not analysis:
         return ""
@@ -317,10 +364,11 @@ def _analysis_block(item: Item) -> str:
     return (
         f'<div style="font-size:13px;color:{NAVY};margin-top:5px;line-height:1.7;'
         f'background:{SURFACE_ALT};border-radius:5px;padding:6px 8px;">'
+        f'<div style="margin-bottom:4px;">'
         f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
-        f'border-radius:3px;padding:1px 6px;margin-right:6px;font-size:11px;font-weight:700;">'
-        f"{label}</span>"
-        f"{html.escape(analysis)}</div>"
+        f'border-radius:3px;padding:1px 6px;font-size:11px;font-weight:700;">'
+        f"{label}</span></div>"
+        f"{_security_analysis_html(analysis)}</div>"
     )
 
 
@@ -354,11 +402,16 @@ def _footer(
     body = "".join(
         f'<div style="margin-top:3px;">{html.escape(line)}</div>' for line in lines
     )
+    research_note = (
+        "看多/看空百分比是基于当前公开材料的事件情景权重，不是统计预测或收益承诺；"
+        "仅供研究参考，不构成投资建议。"
+    )
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-radius:8px;padding:10px 12px;font-size:11px;color:{NAVY_SOFT};">'
         f'<div style="font-weight:600;color:{NAVY};margin-bottom:4px;">章鱼 AI</div>'
-        f"{body}</div>"
+        f"{body}"
+        f'<div style="margin-top:4px;">{research_note}</div></div>'
     )
 
 

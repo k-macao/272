@@ -409,7 +409,7 @@ class Agent:
     def _enrich_news(
         self, groups: list[tuple[SourceResult, list[Item]]], *, ref: datetime | None = None
     ) -> None:
-        """给每条情报补现价、找同一新闻的其它源头、写 AI 分析。失败只记日志，不影响推送。"""
+        """补现价、板块概念、同题报道/网上观点及证券 AI 分析；失败不影响推送。"""
         items = [item for _, bag in groups for item in bag]
         if not items:
             return
@@ -428,8 +428,8 @@ class Agent:
                 ref=ref,
             )
             log.info(
-                "情报增强：%d 条中现价 %d，本轮跨源印证 %d，外部检索 %d 条/命中 %d 篇，"
-                "一句人话 AI %d/规则 %d，AI 分析 %d，规则分析 %d",
+                "情报增强：%d 条中现价 %d，本轮跨源印证 %d，外部报道/观点检索 %d 条/命中 %d 篇，"
+                "一句人话 AI %d/规则 %d，证券 AI 分析 %d，规则分析 %d",
                 stats.get("items", 0),
                 stats.get("quotes", 0),
                 stats.get("linked", 0),

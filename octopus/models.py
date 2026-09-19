@@ -27,14 +27,19 @@ class TimeQuality(str, Enum):
 
 @dataclass
 class RelatedNews:
-    """同一新闻在另一个源头的报道 —— 多源印证的最小单元.
+    """同一事件的报道或网上相似观点 —— AI 交叉分析的最小单元.
 
     relation:
-        same_event    同一事件（共同标的 + 共同事件词，或标题高度相似）
-        same_subject  同一标的的同期消息（只共享标的，事件词不同）
+        same_event       同一事件（共同标的 + 共同事件词，或标题高度相似）
+        similar_viewpoint 围绕同一标的/事件的解读、影响分析或机构观点
+        same_subject     同一标的的同期消息（只共享标的，事件词不同）
     via:
         batch         本轮其它抓取源（离线匹配）
         google / bing 外部新闻检索（RSS，只保留带可验证发布时间的结果）
+
+    ``summary`` 只保存搜索结果公开给出的摘要片段；没有摘要时保持空串，绝不
+    假装读取过原文。``similarity`` 是标题/事件词规则算出的 0~1 相关度，仅用于
+    排序和向模型交代证据强弱，不等同于语义模型分数。
     """
 
     source_label: str
@@ -43,6 +48,8 @@ class RelatedNews:
     published_at: datetime | None = None
     relation: str = "same_event"
     via: str = "batch"
+    summary: str = ""
+    similarity: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +59,8 @@ class RelatedNews:
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "relation": self.relation,
             "via": self.via,
+            "summary": self.summary,
+            "similarity": self.similarity,
         }
 
 
@@ -97,10 +106,10 @@ class Item:
     """现价对应的证券代码。"""
 
     related: list[RelatedNews] = field(default_factory=list)
-    """同一新闻在其它源头的报道（多源印证）。找不到就是空列表，绝不凑数。"""
+    """同一事件报道、网上相似观点及同标的消息。找不到就是空列表，绝不凑数。"""
 
     related_searched: bool = False
-    """本轮是否对该条做过外部新闻检索（区分「没搜」与「搜了没找到」）。"""
+    """本轮是否对该条做过外部报道/观点检索（区分「没搜」与「搜了没找到」）。"""
 
     ai_headline: str = ""
     """一句人话分析（约 30 字）：投资专家口吻的大白话结论，渲染在每条新闻开头。"""
@@ -109,7 +118,7 @@ class Item:
     """True = DeepSeek 生成；False = 规则化一句话（不假装用了 AI）。"""
 
     ai_analysis: str = ""
-    """AI 分析（约 120 字）：事件要点 + 多源印证 + 关注点。"""
+    """证券 AI 分析：板块、概念、相似观点、多空概率与传导逻辑。"""
 
     ai_analysis_from_model: bool = False
     """True = DeepSeek 生成；False = 规则化分析（不假装用了 AI）。"""
