@@ -217,11 +217,37 @@ class TestAnalysis(unittest.TestCase):
 
     def test_rule_analysis_has_required_securities_fields_and_probabilities(self):
         text = rule_analysis(_item("宁德时代(300750)拟回购股份"))
-        for field in ("【板块】", "【概念】", "【相似观点】", "【看多】", "【看空】", "【逻辑】"):
+        for field in (
+            "【事件重塑】",
+            "【利弊挖掘】",
+            "【深度溯源】",
+            "【多维推演】",
+            "【事实核查】",
+        ):
             self.assertIn(field, text)
-        self.assertIn("【看多】62%", text)
-        self.assertIn("【看空】38%", text)
+        self.assertIn("偏多 62% / 偏空 38%", text)
         self.assertIn("非统计预测", text)
+
+    def test_rule_analysis_event_skeleton_skips_source_and_title(self):
+        """事件重塑只补时间/归类/板块/概念，不复述已在卡片上的来源名与标题。"""
+        item = _item("很长的标题" * 5, summary="涨幅 9.98%，换手 1.57%")
+        text = rule_analysis(item)
+        self.assertNotIn("示例源", text)
+        self.assertNotIn("很长的标题", text)
+        self.assertIn("本条于 07-27 10:25 披露", text)
+        self.assertIn("行业板块（本地词典匹配）", text)
+        self.assertIn("相关概念", text)
+
+    def test_rule_analysis_traces_root_cause_and_fact_check(self):
+        """深度溯源要追问触发与上游，事实核查要交代证据强度。"""
+        text = rule_analysis(_item("某公司收到交易所问询函"))
+        self.assertIn("直接触发", text)
+        self.assertIn("上游一层", text)
+        self.assertIn("推测", text)
+        self.assertIn("待核实", text)
+        self.assertIn("监管口径", text)
+        # 事实核查：没有同题报道时必须写明证据不足
+        self.assertIn("观点样本不足", text)
 
     def test_market_context_uses_local_sector_and_concept_dictionary(self):
         context = market_context(_item("宁德时代(300750)拟回购股份"))
@@ -339,13 +365,14 @@ class TestAnalysis(unittest.TestCase):
         http.json.side_effect = FetchError("offline")
         http.text.side_effect = FetchError("offline")
         invalid = (
-            "1. 分析：【板块】电力设备；【概念】锂电池；【相似观点】观点样本不足；"
-            "【看多】70%：回购；【看空】40%：执行风险；【逻辑】回购到风险偏好。"
+            "1. 分析：【事件重塑】宁德时代披露400亿回购；【利弊挖掘】股东受益；"
+            "【深度溯源】现金流充裕；【多维推演】偏多 70% / 偏空 40%：执行风险；"
+            "【事实核查】观点样本不足。"
         )
         http.post_json.return_value = {"choices": [{"message": {"content": invalid}}]}
         enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
         self.assertFalse(item.ai_analysis_from_model)
-        self.assertIn("【看多】62%", item.ai_analysis)  # 回退透明规则权重
+        self.assertIn("偏多 62% / 偏空 38%", item.ai_analysis)  # 回退透明规则权重
 
     def test_ai_partial_securities_fields_are_rejected(self):
         item = _item("宁德时代拟回购")
@@ -353,13 +380,28 @@ class TestAnalysis(unittest.TestCase):
         http.json.side_effect = FetchError("offline")
         http.text.side_effect = FetchError("offline")
         partial = (
-            "1. 分析：【板块】电力设备；【相似观点】样本不足；"
-            "【看多】58%：信心改善；【看空】42%：执行待验证；【逻辑】回购到预期。"
+            "1. 分析：【事件重塑】宁德时代披露回购；【利弊挖掘】股东受益；"
+            "【多维推演】偏多 58% / 偏空 42%：信心改善；【事实核查】样本不足。"
         )
         http.post_json.return_value = {"choices": [{"message": {"content": partial}}]}
         enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
         self.assertFalse(item.ai_analysis_from_model)
-        self.assertIn("【概念】", item.ai_analysis)
+        self.assertIn("【深度溯源】", item.ai_analysis)
+
+    def test_ai_probability_outside_multi_dimension_is_rejected(self):
+        """概率必须写在【多维推演】里，写在别的模块同样拒收。"""
+        item = _item("宁德时代拟回购")
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+        misplaced = (
+            "1. 分析：【事件重塑】偏多 58% / 偏空 42%；【利弊挖掘】股东受益；"
+            "【深度溯源】现金流充裕；【多维推演】短线情绪改善；【事实核查】样本不足。"
+        )
+        http.post_json.return_value = {"choices": [{"message": {"content": misplaced}}]}
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertFalse(item.ai_analysis_from_model)
+        self.assertIn("【多维推演】", item.ai_analysis)
 
     def test_ai_valid_probability_fields_are_kept(self):
         item = _item("宁德时代拟回购")
@@ -367,14 +409,16 @@ class TestAnalysis(unittest.TestCase):
         http.json.side_effect = FetchError("offline")
         http.text.side_effect = FetchError("offline")
         valid = (
-            "1. 分析：【板块】电力设备；【概念】锂电池；【相似观点】观点样本不足；"
-            "【看多】58%：回购改善信心；【看空】42%：执行规模待验证；"
-            "【逻辑】回购计划→筹码预期→风险偏好；目前仅见单一来源。"
+            "1. 分析：【事件重塑】宁德时代披露400亿回购方案；"
+            "【利弊挖掘】股东受益，扩产资金方承压；"
+            "【深度溯源】现金流充裕叠加股价偏离；"
+            "【多维推演】情绪偏暖、业绩待验证、披露程序合规；偏多 58% / 偏空 42%：规模待验证；"
+            "【事实核查】观点样本不足。"
         )
         http.post_json.return_value = {"choices": [{"message": {"content": valid}}]}
         enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
         self.assertTrue(item.ai_analysis_from_model)
-        self.assertIn("【看多】58%", item.ai_analysis)
+        self.assertIn("偏多 58% / 偏空 42%", item.ai_analysis)
 
     def test_quote_failure_does_not_drop_item(self):
         item = _item("宁德时代(300750)拟回购")
@@ -610,17 +654,25 @@ class TestRenderNewsEnrichment(unittest.TestCase):
     def test_structured_securities_analysis_is_split_into_readable_rows(self):
         item = _item("宁德时代拟回购")
         item.ai_analysis = (
-            "【板块】电力设备；【概念】锂电池；【相似观点】样本不足；"
-            "【看多】58%：信心改善；【看空】42%：执行待验证；【逻辑】回购→筹码→风险偏好。"
+            "【事件重塑】宁德时代披露400亿回购方案；【利弊挖掘】股东受益、扩产资金方承压；"
+            "【深度溯源】现金流充裕叠加股价偏离；"
+            "【多维推演】情绪偏暖；偏多 58% / 偏空 42%：规模待验证；【事实核查】观点样本不足。"
         )
         item.ai_analysis_from_model = True
         html = self._html(item)
-        for label in ("【板块】", "【概念】", "【相似观点】", "【看多】", "【看空】", "【逻辑】"):
+        for label in (
+            "【事件重塑】",
+            "【利弊挖掘】",
+            "【深度溯源】",
+            "【多维推演】",
+            "【事实核查】",
+        ):
             self.assertIn(label, html)
-        self.assertIn("58%：信心改善", html)
-        self.assertIn("42%：执行待验证", html)
-        self.assertIn("#a63a2b", html)  # 看多：A 股红
-        self.assertIn("#2c6b4f", html)  # 看空：绿
+        self.assertIn("偏多", html)
+        self.assertIn("偏空", html)
+        # 概率本身按 A 股配色高亮：偏多红、偏空绿
+        self.assertIn('#a63a2b;font-weight:700;">58%</span>', html)
+        self.assertIn('#2c6b4f;font-weight:700;">42%</span>', html)
 
     def test_down_move_uses_green(self):
         item = _item("某股跳水")

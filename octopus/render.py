@@ -326,11 +326,17 @@ def _related_block(item: Item) -> str:
     )
 
 
-_SECURITY_ANALYSIS_MARK = re.compile(r"【(板块|概念|相似观点|看多|看空|逻辑)】")
+#: 证券分析五模块标签；括号里是升级前的六字段，保证历史输出仍能被分行排版。
+_SECURITY_ANALYSIS_MARK = re.compile(
+    r"【(事件重塑|利弊挖掘|深度溯源|多维推演|事实核查|板块|概念|相似观点|看多|看空|逻辑)】"
+)
+#: 多维推演里的情景概率：偏多用 A 股红、偏空用绿，与涨跌幅的配色保持一致。
+_PROB_UP = re.compile(r"(偏多\s*)(\d{1,3}\s*[%％])")
+_PROB_DOWN = re.compile(r"(偏空\s*)(\d{1,3}\s*[%％])")
 
 
 def _security_analysis_html(value: str) -> str:
-    """把证券分析六字段排成窄屏可扫读的行；旧自由文本仍按原样安全转义。"""
+    """把证券分析五模块排成窄屏可扫读的行；旧自由文本仍按原样安全转义。"""
     matches = list(_SECURITY_ANALYSIS_MARK.finditer(value or ""))
     if not matches:
         return html.escape(value).replace("\n", "<br>")
@@ -345,11 +351,18 @@ def _security_analysis_html(value: str) -> str:
         name = match.group(1)
         body = value[match.end() : end].strip(" \n；;")
         color = colors.get(name, NAVY_DEEP)
+        body_html = html.escape(body).replace(chr(10), "<br>")
+        body_html = _PROB_UP.sub(
+            rf'\1<span style="color:{RED};font-weight:700;">\2</span>', body_html
+        )
+        body_html = _PROB_DOWN.sub(
+            rf'\1<span style="color:{GREEN};font-weight:700;">\2</span>', body_html
+        )
         rows.append(
             f'<div style="margin-top:{"4" if index else "1"}px;">'
-            f'<span style="display:inline-block;min-width:48px;color:{color};font-weight:700;'
+            f'<span style="display:inline-block;min-width:64px;color:{color};font-weight:700;'
             f'vertical-align:top;">【{name}】</span>'
-            f'<span style="color:{NAVY};">{html.escape(body).replace(chr(10), "<br>")}</span>'
+            f'<span style="color:{NAVY};">{body_html}</span>'
             f"</div>"
         )
     return "".join(rows)
@@ -403,7 +416,7 @@ def _footer(
         f'<div style="margin-top:3px;">{html.escape(line)}</div>' for line in lines
     )
     research_note = (
-        "看多/看空百分比是基于当前公开材料的事件情景权重，不是统计预测或收益承诺；"
+        "偏多/偏空情景概率是基于当前公开材料的事件情景权重，不是统计预测或收益承诺；"
         "仅供研究参考，不构成投资建议。"
     )
     return (

@@ -8,9 +8,9 @@
    若干条做外部新闻/观点检索（Google/Bing News RSS），收集同题报道与带可验证
    时间的相似观点；只有公开标题/摘要时绝不假装读过全文
 4. 证券 AI 分析：配置了 DeepSeek 则把「事件 + 行情 + 板块/概念匹配 + 网上
-   交叉材料」交给模型，写 ① 开头一句人话结论 ② 板块、概念、相似观点、
-   看多/看空概率与传导逻辑；否则或调用失败时使用规则化情景分析，并如实标注，
-   绝不假装用了 AI
+   交叉材料」交给模型，写 ① 开头一句人话结论 ② 事件重塑、利弊挖掘、深度溯源、
+   多维推演（含偏多/偏空情景概率）、事实核查五个模块；否则或调用失败时使用
+   同样五模块的规则化分析，并如实标注，绝不假装用了 AI
 
 任何一步失败只让该条缺少现价/印证/改用规则分析，不会丢条目、不会拖垮整轮推送。
 """
@@ -63,9 +63,10 @@ INDEX_ALIASES: tuple[tuple[str, str, str], ...] = (
 _BANNED_ANALYSIS = ("买入", "卖出", "目标价", "立即建仓", "稳赚", "必涨", "马上买", "建议加仓", "建议减仓")
 #: 没有同一事件事实报道作印证时，模型不得声称已获多方证实
 _OVERCLAIM = ("多方证实", "多家媒体证实", "多源证实", "已获证实", "多家权威媒体")
-# 六字段证券分析需要容纳板块、概念、观点、多空概率和完整传导链；仍设硬上限
+# 五模块证券分析（事件重塑/利弊挖掘/深度溯源/多维推演/事实核查）需要容纳
+# 事件骨架、双向利弊、溯源、三维度推演加概率和核查清单；仍设硬上限，
 # 防止单条模型输出失控挤爆微信卡片。
-ANALYSIS_LIMIT = 520
+ANALYSIS_LIMIT = 560
 HEADLINE_LIMIT = 48
 AI_CHUNK_SIZE = 6
 AI_WORKERS = 3
@@ -487,42 +488,174 @@ def _num(value: object) -> float | None:
 # AI 分析（DeepSeek）/ 规则化分析（降级）
 # ---------------------------------------------------------------------------
 def rule_analysis(item: Item) -> str:
-    """无大模型时的结构化证券情景分析。
+    """无大模型时的结构化证券分析：事件重塑 → 利弊挖掘 → 深度溯源 → 多维推演 → 事实核查。
 
-    百分比是透明的事件类型规则权重，不伪装成统计模型；板块/概念来自本地词典，
-    网上观点只引用已检索到的公开标题。卡片因此仍完整展示用户要求的六个字段，
-    但标签保持「分析」而非「AI 分析」。
+    与大模型输出同一套五模块骨架，卡片排版因此完全一致；事件要素、板块/概念来自
+    源字段与本地词典，网上观点只引用已检索到的公开标题，百分比是透明的事件类型
+    规则权重，不伪装成统计模型，标签保持「分析」而非「AI 分析」。
     """
-    from . import crossref
+    bull, bear, bull_reason, bear_reason, chain = _rule_scenario(item)
+    focus = _rule_focus(item).rstrip("。")
+    return (
+        f"【事件重塑】{_rule_event_skeleton(item)}；"
+        f"【利弊挖掘】{_rule_pros_cons(item, bull_reason, bear_reason)}；"
+        f"【深度溯源】{_rule_root_cause(item)}；"
+        f"【多维推演】短线情绪与资金：{bull_reason}／{bear_reason}；"
+        f"基本面与业绩：{chain}；政策与监管：{_rule_policy_line(item)}；"
+        f"偏多 {bull}% / 偏空 {bear}%；关键验证点：{focus}；"
+        f"【事实核查】{_rule_fact_check(item)}。"
+        f"（规则情景权重，非统计预测）。"
+    )
 
+
+def _rule_event_skeleton(item: Item) -> str:
+    """事件重塑：只用源字段、标签与已核验行情还原可核对的事件骨架。
+
+    标题与摘要已经印在卡片上，这里不复述，只补「谁、对谁、何时、归哪类、现价」。
+    """
+    from .crossref import event_tags
+
+    tags = sorted(event_tags(f"{item.title} {item.summary}"))
+    kind = "、".join(tags[:3]) or "未归类"
+    when = f"{item.published_at:%m-%d %H:%M}" if item.published_at else "时间待核"
     context = market_context(item)
     sector = context.sector or "未识别"
     concepts = "、".join(context.concepts) or "未识别"
+
+    name = (item.price_name or "").strip()
+    code = (item.price_code or "").strip()
+    if code or name:
+        subject = f"标的 {name}({code})" if name and code else f"标的 {name or code}"
+    else:
+        subject = "未识别出明确标的，按事件本身跟踪"
+    if item.last_price is not None:
+        change = "" if item.price_change is None else f"（{item.price_change:+.2f}%）"
+        subject += f"，已核验现价 {item.last_price:.2f}{change}"
+
+    return (
+        f"本条于 {when} 披露，事件归类：{kind}；{subject}；"
+        f"行业板块（本地词典匹配）：{sector}；相关概念：{concepts}"
+    )
+
+
+#: 事件类别 -> (相对受益方, 相对承压方)。只写方向，不写幅度，幅度看正式披露口径。
+_RULE_PARTIES: tuple[tuple[frozenset[str], str, str], ...] = (
+    (frozenset({"回购", "增持"}), "公司现有股东与手上的流通筹码", "希望现金投向扩产或分红的资金方"),
+    (frozenset({"减持"}), "减持方与折价承接方", "二级市场流通股东（供给增加）"),
+    (frozenset({"分红"}), "要现金回报的长期资金", "需要留存现金做扩张的公司诉求"),
+    (frozenset({"订单"}), "接单企业及其上游供应链", "同业内没拿到这批订单的竞争者"),
+    (frozenset({"业绩"}), "业绩超预期的一方及其产业链", "业绩不及预期的同业与高预期持股者"),
+    (frozenset({"并购重组"}), "被并购方股东与协同业务线", "承担溢价与整合成本的一方"),
+    (frozenset({"再融资"}), "募投项目指向的产能与负债结构", "现有股东（每股收益被摊薄）"),
+    (frozenset({"货币政策"}), "对资金价格敏感的高杠杆与成长板块", "依赖利差的低风险资产"),
+    (frozenset({"宏观数据"}), "顺周期行业与出口链", "低弹性、偏防御的资产"),
+    (frozenset({"监管", "问询", "风险警示", "诉讼"}), "合规经营、披露充分的头部公司", "被点名主体及其关联方、风险偏好高的短线资金"),
+    (frozenset({"涨停", "拉升"}), "已持仓者与顺势资金", "追高接盘方与对冲资金"),
+    (frozenset({"跌停", "回撤"}), "空头与等低位配置的资金", "持仓者与被动减仓资金"),
+)
+_RULE_PARTIES_DEFAULT = ("事件指向的直接相关方", "要承担不确定性的对手方")
+
+
+def _rule_pros_cons(item: Item, bull_reason: str, bear_reason: str) -> str:
+    """利弊挖掘：点出受益方与承压方，并把双向理由挂到各自一边。"""
+    from .crossref import event_tags
+
+    tags = set(event_tags(f"{item.title} {item.summary}"))
+    beneficiary, pressed = _RULE_PARTIES_DEFAULT
+    for group, pro, con in _RULE_PARTIES:
+        if tags & group:
+            beneficiary, pressed = pro, con
+            break
+    return (
+        f"相对受益：{beneficiary}——{bull_reason}；"
+        f"相对承压：{pressed}——{bear_reason}；量级与节奏以正式披露口径为准"
+    )
+
+
+#: 事件类别 -> (直接触发, 往上游追一层)。历史同类演进部分统一走通用表述。
+_RULE_ROOTS: tuple[tuple[frozenset[str], str, str], ...] = (
+    (frozenset({"回购", "增持"}), "公司或股东主动出手，通常自认股价低于内在价值、现金能覆盖", "上游一层：现金流是否真宽裕、股价与价值的偏离有多大"),
+    (frozenset({"减持"}), "股东有变现或资金安排，触发点多是解禁到期或个人资金计划", "上游一层：解禁节奏、股东资金压力与当前估值位置"),
+    (frozenset({"分红"}), "利润分配方案落地，触发点是当期盈利与自由现金流", "上游一层：盈利质量、资本开支计划与分红能否持续"),
+    (frozenset({"订单"}), "新签合同或中标落地，触发点是下游真实需求释放", "上游一层：行业景气度、产能匹配度与合同价格条款"),
+    (frozenset({"业绩"}), "定期报告或业绩预告披露，触发点是经营结果兑现", "上游一层：收入结构、毛利率与费用端的真实变化"),
+    (frozenset({"并购重组"}), "公司主动调整资产与业务结构，触发点是战略转型或保壳诉求", "上游一层：行业集中度、融资环境与监管审批尺度"),
+    (frozenset({"再融资"}), "公司补充资本金，触发点是资金缺口或项目投入", "上游一层：负债率、项目回报率与再融资监管口径"),
+    (frozenset({"货币政策"}), "央行或监管部门操作落地，触发点是流动性管理目标", "上游一层：增长、通胀与汇率三重约束下的政策取舍"),
+    (frozenset({"宏观数据"}), "统计数据发布，触发点是经济运行结果与预期之间的差", "上游一层：基数效应、季节性与政策刺激的滞后传导"),
+    (frozenset({"监管", "问询", "风险警示", "诉讼"}), "监管或司法程序启动，触发点多为线索、举报或例行检查", "上游一层：公司治理与信息披露质量、监管周期松紧"),
+    (frozenset({"涨停", "拉升"}), "买盘在盘中集中，触发点是消息面或资金面共振", "上游一层：题材热度、筹码结构与增量资金来源"),
+    (frozenset({"跌停", "回撤"}), "卖压在盘中集中，触发点是利空消息或资金撤离", "上游一层：估值消化压力、风险事件与流动性状况"),
+)
+_RULE_ROOTS_DEFAULT = ("现有公开材料只给了结果，未说明原因", "上游一层信息不足，需等公告或官方口径补齐")
+
+
+def _rule_root_cause(item: Item) -> str:
+    """深度溯源：直接触发 → 上游一层 → 同类事件通常怎么演进（推测部分标明）。"""
+    from .crossref import event_tags
+
+    tags = set(event_tags(f"{item.title} {item.summary}"))
+    trigger, upstream = _RULE_ROOTS_DEFAULT
+    for group, direct, up in _RULE_ROOTS:
+        if tags & group:
+            trigger, upstream = direct, up
+            break
+    return (
+        f"直接触发：{trigger}；{upstream}；"
+        f"同类事件通常先在情绪与成交上反应，最终回到公告与经营数据验证"
+        f"（后半句为基于公开材料的推测，非已披露事实）"
+    )
+
+
+#: 事件类别 -> 政策与监管维度的推演口径。
+_RULE_POLICY: tuple[tuple[frozenset[str], str], ...] = (
+    (frozenset({"监管", "问询", "风险警示", "诉讼"}), "事件本身就在监管或司法程序内，处罚尺度与整改进度决定不确定性何时收敛"),
+    (frozenset({"回购", "增持", "减持", "分红", "再融资", "并购重组"}), "需符合交易所披露与程序要求，方案调整或问询回复都会改变预期"),
+    (frozenset({"货币政策", "宏观数据"}), "政策与数据由官方发布，留意后续正式口径与解读偏差"),
+    (frozenset({"涨停", "拉升", "跌停", "回撤"}), "异动可能引来交易所关注或核查，留意是否伴随澄清公告"),
+)
+_RULE_POLICY_DEFAULT = "本条未见直接监管触发，按常规信息披露与合规口径跟踪"
+
+
+def _rule_policy_line(item: Item) -> str:
+    """多维推演里的政策与监管一条线。"""
+    from .crossref import event_tags
+
+    tags = set(event_tags(f"{item.title} {item.summary}"))
+    for group, line in _RULE_POLICY:
+        if tags & group:
+            return line
+    return _RULE_POLICY_DEFAULT
+
+
+def _rule_fact_check(item: Item) -> str:
+    """事实核查：来源与观点样本够不够，还差什么没核实（只引用已检索到的标题）。"""
+    from . import crossref
+
     views = [rel for rel in item.related if rel.relation == "similar_viewpoint"]
+    bits = [crossref.corroboration_summary(item)]
     if views:
         samples = "；".join(
             f"{crossref.describe_related(rel)}：{clip_brief(rel.title, 34)}"
             for rel in views[:3]
         )
+        bits.append(f"可比对的观点：{samples}")
         if len({rel.source_label for rel in views}) < 2:
-            samples += "；观点样本不足（少于 2 个不同来源）"
+            bits.append("观点样本不足（少于 2 个不同来源）")
         if not any(rel.relation == "same_event" for rel in item.related):
-            samples += "；事件事实目前仍仅见原始来源"
-        viewpoint = samples
+            bits.append("事件事实目前仍仅见原始来源")
     else:
-        viewpoint = crossref.corroboration_summary(item)
-        viewpoint += "；未检出可独立比较的网上观点，观点样本不足"
+        bits.append("未检出可独立比较的网上观点，观点样本不足")
+    bits.append(_rule_gap(item))
+    return "；".join(bits)
 
-    bull, bear, bull_reason, bear_reason, chain = _rule_scenario(item)
-    focus = _rule_focus(item).rstrip("。")
-    return (
-        f"【板块】{sector}；【概念】{concepts}；"
-        f"【相似观点】{viewpoint}；"
-        f"【看多】{bull}%：{bull_reason}；"
-        f"【看空】{bear}%：{bear_reason}；"
-        f"【逻辑】{chain}；验证点：{focus}。"
-        f"（规则情景权重，非统计预测）。"
-    )
+
+def _rule_gap(item: Item) -> str:
+    """核查缺口：关键要素到底被几个来源复核过（验证点本身放在多维推演里）。"""
+    same = [rel for rel in item.related if rel.relation == "same_event"]
+    if same:
+        return f"待核实：关键要素已在 {len(same)} 个其它源头比对，最终仍以公告原文为准"
+    return "待核实：关键要素（主体、金额、时间）未在其它来源逐项复核，以原始披露为准"
 
 
 #: 事件类别 -> (看多概率, 看多理由, 看空理由, 传导链)。概率只表示短线事件影响权重。
@@ -739,18 +872,39 @@ def parse_news_analyses(text: str) -> dict[int, str]:
     }
 
 
-_SECURITY_FIELDS = ("【板块】", "【概念】", "【相似观点】", "【看多】", "【看空】", "【逻辑】")
+#: 证券分析五模块：事件重塑 → 利弊挖掘 → 深度溯源 → 多维推演 → 事实核查。
+#: 渲染按这五个标签分行，校验按这五个标签判断格式是否完整。
+SECURITY_FIELDS = ("【事件重塑】", "【利弊挖掘】", "【深度溯源】", "【多维推演】", "【事实核查】")
+#: 兼容升级前的六字段输出（板块/概念/相似观点/看多/看空/逻辑）
+_LEGACY_FIELDS = ("【板块】", "【概念】", "【相似观点】", "【看多】", "【看空】", "【逻辑】")
+_PROB_BULL = re.compile(r"偏多\s*(\d{1,3})\s*[%％]")
+_PROB_BEAR = re.compile(r"偏空\s*(\d{1,3})\s*[%％]")
+
+
+def _field_body(text: str, field: str) -> str:
+    """取出某个模块标签到下一个模块标签之间的正文。"""
+    start = text.find(field)
+    if start < 0:
+        return ""
+    start += len(field)
+    end = len(text)
+    for other in (*SECURITY_FIELDS, *_LEGACY_FIELDS):
+        idx = text.find(other, start)
+        if idx >= 0:
+            end = min(end, idx)
+    return text[start:end]
 
 
 def _probabilities_valid(text: str) -> bool:
-    """新六字段格式必须字段齐全、多空合计 100；无字段的历史格式继续兼容。"""
-    present = [field in text for field in _SECURITY_FIELDS]
+    """五模块格式必须模块齐全、多维推演里的偏多/偏空合计 100；无字段的旧格式继续兼容。"""
+    present = [field in text for field in SECURITY_FIELDS]
     if not any(present):
         return True
     if not all(present):
         return False
-    bull = re.search(r"【看多】\s*(\d{1,3})\s*[%％]", text)
-    bear = re.search(r"【看空】\s*(\d{1,3})\s*[%％]", text)
+    segment = _field_body(text, "【多维推演】")
+    bull = _PROB_BULL.search(segment)
+    bear = _PROB_BEAR.search(segment)
     if bull is None or bear is None:
         return False
     values = int(bull.group(1)), int(bear.group(1))
@@ -761,8 +915,8 @@ def _acceptable(item: Item, text: str) -> bool:
     """一句话与分析共用的合规/概率红线。
 
     荐股类措辞一律拒收；没有同一事件的其它事实报道却声称「已获多方证实」也拒收；
-    （相似观点和同标的消息不能冒充事实印证。）新格式若六字段不完整，或多空
-    概率不合计 100，同样拒收。回退时保留规则化文本，
+    （相似观点和同标的消息不能冒充事实印证。）新格式若五模块不完整，或多维推演里的
+    偏多/偏空概率不合计 100，同样拒收。回退时保留规则化文本，
     宁可朴素也不越线。
     """
     if not text or any(w in text for w in _BANNED_ANALYSIS):
@@ -802,7 +956,7 @@ def _fill_analysis(
     from .ai import DeepSeekAI, NewsAnalysisEntry
 
     client = DeepSeekAI(api_key, model=model or "deepseek-v4-flash", http=http)
-    # 每条会携带行情、板块概念和最多六条网上材料，输出也扩展为六字段；继续分块
+    # 每条会携带行情、板块概念和最多六条网上材料，输出为五个分析模块；继续分块
     # 并发，既控制单次上下文，又不让全量情报串行等待。
     chunk_size = AI_CHUNK_SIZE
     chunks = [items[start : start + chunk_size] for start in range(0, len(items), chunk_size)]

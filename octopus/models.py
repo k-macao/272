@@ -118,7 +118,7 @@ class Item:
     """True = DeepSeek 生成；False = 规则化一句话（不假装用了 AI）。"""
 
     ai_analysis: str = ""
-    """证券 AI 分析：板块、概念、相似观点、多空概率与传导逻辑。"""
+    """证券 AI 分析：事件重塑、利弊挖掘、深度溯源、多维推演、事实核查。"""
 
     ai_analysis_from_model: bool = False
     """True = DeepSeek 生成；False = 规则化分析（不假装用了 AI）。"""

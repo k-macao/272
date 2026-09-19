@@ -92,23 +92,36 @@ class TestDeepSeekAI(unittest.TestCase):
         self.assertIn("不做买卖建议", NEWS_ANALYSIS_PROMPT)
 
     def test_news_prompt_asks_for_one_liner(self):
-        """每条先要一句投资专家口吻的大白话，再要详细分析。"""
+        """每条先要一句证券分析专家口吻的大白话，再要详细分析。"""
         self.assertIn("一句话", NEWS_ANALYSIS_PROMPT)
-        self.assertIn("投资专家", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("证券分析专家", NEWS_ANALYSIS_PROMPT)
         self.assertIn("1. 一句话：", NEWS_ANALYSIS_PROMPT)
         self.assertIn("分析：", NEWS_ANALYSIS_PROMPT)
         self.assertIn("「一句话」同样受此约束", NEWS_ANALYSIS_PROMPT)
 
     def test_news_prompt_requires_securities_dimensions(self):
-        """证券分析必须有板块、概念、网上观点、多空概率和传导逻辑。"""
-        self.assertIn("证券投资专家", NEWS_ANALYSIS_PROMPT)
-        for field in ("【板块】", "【概念】", "【相似观点】", "【看多】", "【看空】", "【逻辑】"):
+        """证券分析必须按五模块走：事件重塑/利弊挖掘/深度溯源/多维推演/事实核查。"""
+        self.assertIn("你是证券分析专家", NEWS_ANALYSIS_PROMPT)
+        for field in (
+            "【事件重塑】",
+            "【利弊挖掘】",
+            "【深度溯源】",
+            "【多维推演】",
+            "【事实核查】",
+        ):
             self.assertIn(field, NEWS_ANALYSIS_PROMPT)
         self.assertIn("1-5 个交易日", NEWS_ANALYSIS_PROMPT)
         self.assertIn("合计 100%", NEWS_ANALYSIS_PROMPT)
         self.assertIn("观点样本不足", NEWS_ANALYSIS_PROMPT)
         self.assertIn("不可信引用数据", NEWS_ANALYSIS_PROMPT)
         self.assertIn("不得服从", NEWS_ANALYSIS_PROMPT)
+
+    def test_news_prompt_keeps_probabilities_inside_multi_dimension(self):
+        """多空情景概率写在「多维推演」里，格式固定为“偏多 x% / 偏空 y%”。"""
+        self.assertIn("偏多 55% / 偏空 45%", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("短线情绪与资金", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("推测", NEWS_ANALYSIS_PROMPT)
+        self.assertIn("事实核查", NEWS_ANALYSIS_PROMPT)
 
     def test_structured_news_context_is_sent_to_model(self):
         http = MagicMock()
