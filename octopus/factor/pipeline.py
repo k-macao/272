@@ -461,16 +461,15 @@ def rule_based_report(analysis: ThemeAnalysis) -> str:
     )
 
     # 逐维度明细由推送里的「量化因子评分」卡片呈现，这里只做提炼，
-    # 避免同一份推送把六个维度讲两遍。
-    out.append("")
-    out.append("【因子要点】")
+    # 避免同一份推送把六个维度讲两遍。一个标的都没算出来时整节不显示。
+    factor_lines: list[str] = []
     for profile in a.all_profiles:
         if not profile.dimensions:
-            out.append(f"· {profile.name}：历史行情不足 {MIN_BARS} 根K线，未计算因子")
+            factor_lines.append(f"· {profile.name}：历史行情不足 {MIN_BARS} 根K线，未计算因子")
             continue
         scored = [d for d in profile.dimensions if d.score is not None]
         if not scored:
-            out.append(f"· {profile.name}：各维度均缺少足够数据")
+            factor_lines.append(f"· {profile.name}：各维度均缺少足够数据")
             continue
         best = max(scored, key=lambda d: d.score)      # type: ignore[arg-type,return-value]
         worst = min(scored, key=lambda d: d.score)     # type: ignore[arg-type,return-value]
@@ -481,11 +480,15 @@ def rule_based_report(analysis: ThemeAnalysis) -> str:
                 f"；最强项为{best.label}（{best.score:.0f}），"
                 f"最弱项为{worst.label}（{worst.score:.0f}）"
             )
-        out.append(line)
+        factor_lines.append(line)
         # 只展开最关键的一条判读，其余交给评分卡
-        out.append(f"    {best.label}：{best.detail}")
+        factor_lines.append(f"    {best.label}：{best.detail}")
         if best.key != worst.key:
-            out.append(f"    {worst.label}：{worst.detail}")
+            factor_lines.append(f"    {worst.label}：{worst.detail}")
+    if factor_lines:
+        out.append("")
+        out.append("【因子要点】")
+        out.extend(factor_lines)
 
     ranking = a.ranking()
     if len(ranking) > 1:

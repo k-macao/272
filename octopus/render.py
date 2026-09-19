@@ -350,6 +350,8 @@ def _security_analysis_html(value: str) -> str:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(value)
         name = match.group(1)
         body = value[match.end() : end].strip(" \n；;")
+        if not body:
+            continue  # 模块标签后面没内容就不显示这一行，不留空标签
         color = colors.get(name, NAVY_DEEP)
         body_html = html.escape(body).replace(chr(10), "<br>")
         body_html = _PROB_UP.sub(
@@ -359,7 +361,7 @@ def _security_analysis_html(value: str) -> str:
             rf'\1<span style="color:{GREEN};font-weight:700;">\2</span>', body_html
         )
         rows.append(
-            f'<div style="margin-top:{"4" if index else "1"}px;">'
+            f'<div style="margin-top:{"1" if len(rows) == 0 else "4"}px;">'
             f'<span style="display:inline-block;min-width:64px;color:{color};font-weight:700;'
             f'vertical-align:top;">【{name}】</span>'
             f'<span style="color:{NAVY};">{body_html}</span>'
@@ -369,9 +371,15 @@ def _security_analysis_html(value: str) -> str:
 
 
 def _analysis_block(item: Item) -> str:
-    """证券分析：AI 产出标「AI 分析」，规则化降级标「分析」，不假装。"""
+    """证券分析：AI 产出标「AI 分析」，规则化降级标「分析」，不假装。
+
+    没有分析文本、或文本里只剩空模块标签时整块不显示 —— 兜底不凑字数。
+    """
     analysis = (item.ai_analysis or "").strip()
     if not analysis:
+        return ""
+    body_html = _security_analysis_html(analysis)
+    if not body_html.strip():
         return ""
     label = "AI 分析" if item.ai_analysis_from_model else "分析"
     return (
@@ -381,7 +389,7 @@ def _analysis_block(item: Item) -> str:
         f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
         f'border-radius:3px;padding:1px 6px;font-size:11px;font-weight:700;">'
         f"{label}</span></div>"
-        f"{_security_analysis_html(analysis)}</div>"
+        f"{body_html}</div>"
     )
 
 
@@ -1022,9 +1030,11 @@ def render_theme(analysis, *, ref: datetime | None = None) -> str:
     cards: list[str] = [_theme_header(analysis, ref), _theme_overview(analysis)]
     if analysis.all_profiles:
         cards.append(_theme_factor_card(analysis))
+    # 解读正文为空（大模型没返回、规则化也无话可说）时整卡不显示，不留空标题。
+    if (analysis.ai_report or "").strip():
+        cards.append(_theme_ai_card(analysis))
     cards.extend(
         [
-            _theme_ai_card(analysis),
             _theme_supervision_card(analysis),
             _theme_provenance_card(analysis),
             _theme_disclaimer_card(analysis),
@@ -1299,7 +1309,9 @@ def _theme_provenance_card(analysis) -> str:
     lines.extend(analysis.notes)
 
     body = "".join(
-        f'<div style="margin-top:3px;">· {html.escape(line)}</div>' for line in lines
+        f'<div style="margin-top:3px;">· {html.escape(line)}</div>'
+        for line in lines
+        if (line or "").strip()  # 空行不显示，不留一个孤零零的「·」
     )
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'

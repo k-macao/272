@@ -10,7 +10,10 @@
 4. 证券 AI 分析：配置了 DeepSeek 则把「事件 + 行情 + 板块/概念匹配 + 网上
    交叉材料」交给模型，写 ① 开头一句人话结论 ② 事件重塑、利弊挖掘、深度溯源、
    多维推演（含偏多/偏空情景概率）、事实核查五个模块；否则或调用失败时使用
-   同样五模块的规则化分析，并如实标注，绝不假装用了 AI
+   同样五模块的规则化分析，并如实标注，绝不假装用了 AI。
+   规则化兜底逐模块判断有没有真内容：认不出的字段与模块直接不写（不留
+   「未归类/未识别/依据不足」占位），事件类型、标的、行业概念一个都匹配不上时
+   整条留空，推送里这一块不显示
 
 任何一步失败只让该条缺少现价/印证/改用规则分析，不会丢条目、不会拖垮整轮推送。
 """
@@ -124,6 +127,7 @@ def enrich_news(
     stats = {
         "items": len(bag), "quotes": 0, "ai": 0, "rule": 0,
         "headline_ai": 0, "headline_rule": 0,
+        "analysis_skipped": 0, "headline_skipped": 0,
         "linked": 0, "searched": 0, "external_hits": 0,
     }
     if not bag:
@@ -177,6 +181,9 @@ def enrich_news(
     stats["headline_rule"] = sum(
         1 for it in bag if it.ai_headline and not it.ai_headline_from_model
     )
+    # 分析不出的条目不写兜底文本，推送里整块不显示；计数只为日志可见
+    stats["analysis_skipped"] = sum(1 for it in bag if not it.ai_analysis)
+    stats["headline_skipped"] = sum(1 for it in bag if not it.ai_headline)
     return stats
 
 
@@ -493,49 +500,84 @@ def rule_analysis(item: Item) -> str:
     与大模型输出同一套五模块骨架，卡片排版因此完全一致；事件要素、板块/概念来自
     源字段与本地词典，网上观点只引用已检索到的公开标题，百分比是透明的事件类型
     规则权重，不伪装成统计模型，标签保持「分析」而非「AI 分析」。
+
+    兜底不等于必须说话：五个模块逐块判断「有没有真内容」，认不出的模块直接不写；
+    事件类型、标的、行业概念一个都匹配不上时（例如「关于召开临时股东大会的通知」
+    这类通知），规则引擎只剩「未归类/未识别/依据不足/偏多 50%」这种空转文本，
+    此时返回空串，由渲染层整块不显示，绝不用兜底条款凑字数。
     """
-    bull, bear, bull_reason, bear_reason, chain = _rule_scenario(item)
-    focus = _rule_focus(item).rstrip("。")
-    return (
-        f"【事件重塑】{_rule_event_skeleton(item)}；"
-        f"【利弊挖掘】{_rule_pros_cons(item, bull_reason, bear_reason)}；"
-        f"【深度溯源】{_rule_root_cause(item)}；"
-        f"【多维推演】短线情绪与资金：{bull_reason}／{bear_reason}；"
-        f"基本面与业绩：{chain}；政策与监管：{_rule_policy_line(item)}；"
-        f"偏多 {bull}% / 偏空 {bear}%；关键验证点：{focus}；"
-        f"【事实核查】{_rule_fact_check(item)}。"
-        f"（规则情景权重，非统计预测）。"
-    )
+    tags = _rule_event_tags(item)
+    scenario = _rule_scenario_match(tags)
+    modules: list[str] = []
+
+    skeleton = _rule_event_skeleton(item, tags)
+    if skeleton:
+        modules.append(f"【事件重塑】{skeleton}")
+
+    if scenario is not None:
+        _, bull, bull_reason, bear_reason, chain = scenario
+        bear = 100 - bull
+        pros_cons = _rule_pros_cons(item, bull_reason, bear_reason, tags)
+        if pros_cons:
+            modules.append(f"【利弊挖掘】{pros_cons}")
+        root_cause = _rule_root_cause(item, tags)
+        if root_cause:
+            modules.append(f"【深度溯源】{root_cause}")
+        deduction = _rule_deduction(item, bull, bear, bull_reason, bear_reason, chain, tags)
+        if deduction:
+            modules.append(f"【多维推演】{deduction}")
+
+    if not modules:
+        return ""  # 分析不出：整块不显示
+
+    modules.append(f"【事实核查】{_rule_fact_check(item)}")
+    text = "；".join(modules) + "。"
+    if scenario is not None:
+        text += "（规则情景权重，非统计预测）。"
+    return text
 
 
-def _rule_event_skeleton(item: Item) -> str:
+def _rule_event_tags(item: Item) -> list[str]:
+    """本地事件词典命中的类别（去重、按词典顺序），认不出就是空列表。"""
+    from .crossref import event_tags
+
+    return list(dict.fromkeys(event_tags(f"{item.title} {item.summary}")))
+
+
+def _rule_event_skeleton(item: Item, tags: list[str] | None = None) -> str:
     """事件重塑：只用源字段、标签与已核验行情还原可核对的事件骨架。
 
     标题与摘要已经印在卡片上，这里不复述，只补「谁、对谁、何时、归哪类、现价」。
+    一项都补不出来时返回空串 —— 整个模块不显示，也不写「未归类/未识别」占位。
     """
-    from .crossref import event_tags
-
-    tags = sorted(event_tags(f"{item.title} {item.summary}"))
-    kind = "、".join(tags[:3]) or "未归类"
-    when = f"{item.published_at:%m-%d %H:%M}" if item.published_at else "时间待核"
+    tags = _rule_event_tags(item) if tags is None else tags
     context = market_context(item)
-    sector = context.sector or "未识别"
-    concepts = "、".join(context.concepts) or "未识别"
+
+    bits: list[str] = []
+    if tags:
+        bits.append(f"事件归类：{'、'.join(tags[:3])}")
 
     name = (item.price_name or "").strip()
     code = (item.price_code or "").strip()
     if code or name:
         subject = f"标的 {name}({code})" if name and code else f"标的 {name or code}"
-    else:
-        subject = "未识别出明确标的，按事件本身跟踪"
-    if item.last_price is not None:
+        if item.last_price is not None:
+            change = "" if item.price_change is None else f"（{item.price_change:+.2f}%）"
+            subject += f"，已核验现价 {item.last_price:.2f}{change}"
+        bits.append(subject)
+    elif item.last_price is not None:
         change = "" if item.price_change is None else f"（{item.price_change:+.2f}%）"
-        subject += f"，已核验现价 {item.last_price:.2f}{change}"
+        bits.append(f"已核验现价 {item.last_price:.2f}{change}")
 
-    return (
-        f"本条于 {when} 披露，事件归类：{kind}；{subject}；"
-        f"行业板块（本地词典匹配）：{sector}；相关概念：{concepts}"
-    )
+    if context.sector:
+        bits.append(f"行业板块（本地词典匹配）：{context.sector}")
+    if context.concepts:
+        bits.append(f"相关概念：{'、'.join(context.concepts)}")
+
+    if not bits:
+        return ""
+    when = f"{item.published_at:%m-%d %H:%M}" if item.published_at else ""
+    return (f"本条于 {when} 披露，" if when else "") + "；".join(bits)
 
 
 #: 事件类别 -> (相对受益方, 相对承压方)。只写方向，不写幅度，幅度看正式披露口径。
@@ -553,23 +595,24 @@ _RULE_PARTIES: tuple[tuple[frozenset[str], str, str], ...] = (
     (frozenset({"涨停", "拉升"}), "已持仓者与顺势资金", "追高接盘方与对冲资金"),
     (frozenset({"跌停", "回撤"}), "空头与等低位配置的资金", "持仓者与被动减仓资金"),
 )
-_RULE_PARTIES_DEFAULT = ("事件指向的直接相关方", "要承担不确定性的对手方")
 
 
-def _rule_pros_cons(item: Item, bull_reason: str, bear_reason: str) -> str:
-    """利弊挖掘：点出受益方与承压方，并把双向理由挂到各自一边。"""
-    from .crossref import event_tags
+def _rule_pros_cons(
+    item: Item, bull_reason: str, bear_reason: str, tags: list[str] | None = None
+) -> str:
+    """利弊挖掘：点出受益方与承压方，并把双向理由挂到各自一边。
 
-    tags = set(event_tags(f"{item.title} {item.summary}"))
-    beneficiary, pressed = _RULE_PARTIES_DEFAULT
+    事件类型认不出来时返回空串 —— 「事件指向的直接相关方」这种对谁都成立的话
+    不写，模块整块不显示。
+    """
+    found = set(_rule_event_tags(item) if tags is None else tags)
     for group, pro, con in _RULE_PARTIES:
-        if tags & group:
-            beneficiary, pressed = pro, con
-            break
-    return (
-        f"相对受益：{beneficiary}——{bull_reason}；"
-        f"相对承压：{pressed}——{bear_reason}；量级与节奏以正式披露口径为准"
-    )
+        if found & group:
+            return (
+                f"相对受益：{pro}——{bull_reason}；"
+                f"相对承压：{con}——{bear_reason}；量级与节奏以正式披露口径为准"
+            )
+    return ""
 
 
 #: 事件类别 -> (直接触发, 往上游追一层)。历史同类演进部分统一走通用表述。
@@ -587,24 +630,22 @@ _RULE_ROOTS: tuple[tuple[frozenset[str], str, str], ...] = (
     (frozenset({"涨停", "拉升"}), "买盘在盘中集中，触发点是消息面或资金面共振", "上游一层：题材热度、筹码结构与增量资金来源"),
     (frozenset({"跌停", "回撤"}), "卖压在盘中集中，触发点是利空消息或资金撤离", "上游一层：估值消化压力、风险事件与流动性状况"),
 )
-_RULE_ROOTS_DEFAULT = ("现有公开材料只给了结果，未说明原因", "上游一层信息不足，需等公告或官方口径补齐")
 
 
-def _rule_root_cause(item: Item) -> str:
-    """深度溯源：直接触发 → 上游一层 → 同类事件通常怎么演进（推测部分标明）。"""
-    from .crossref import event_tags
+def _rule_root_cause(item: Item, tags: list[str] | None = None) -> str:
+    """深度溯源：直接触发 → 上游一层 → 同类事件通常怎么演进（推测部分标明）。
 
-    tags = set(event_tags(f"{item.title} {item.summary}"))
-    trigger, upstream = _RULE_ROOTS_DEFAULT
+    事件类型认不出来时返回空串，不写「材料只给了结果、原因未说明」这类空转条款。
+    """
+    found = set(_rule_event_tags(item) if tags is None else tags)
     for group, direct, up in _RULE_ROOTS:
-        if tags & group:
-            trigger, upstream = direct, up
-            break
-    return (
-        f"直接触发：{trigger}；{upstream}；"
-        f"同类事件通常先在情绪与成交上反应，最终回到公告与经营数据验证"
-        f"（后半句为基于公开材料的推测，非已披露事实）"
-    )
+        if found & group:
+            return (
+                f"直接触发：{direct}；{up}；"
+                f"同类事件通常先在情绪与成交上反应，最终回到公告与经营数据验证"
+                f"（后半句为基于公开材料的推测，非已披露事实）"
+            )
+    return ""
 
 
 #: 事件类别 -> 政策与监管维度的推演口径。
@@ -614,18 +655,44 @@ _RULE_POLICY: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"货币政策", "宏观数据"}), "政策与数据由官方发布，留意后续正式口径与解读偏差"),
     (frozenset({"涨停", "拉升", "跌停", "回撤"}), "异动可能引来交易所关注或核查，留意是否伴随澄清公告"),
 )
-_RULE_POLICY_DEFAULT = "本条未见直接监管触发，按常规信息披露与合规口径跟踪"
 
 
-def _rule_policy_line(item: Item) -> str:
-    """多维推演里的政策与监管一条线。"""
-    from .crossref import event_tags
-
-    tags = set(event_tags(f"{item.title} {item.summary}"))
+def _rule_policy_line(item: Item, tags: list[str] | None = None) -> str:
+    """多维推演里的政策与监管一条线；认不出事件类型就返回空串（整行不写）。"""
+    found = set(_rule_event_tags(item) if tags is None else tags)
     for group, line in _RULE_POLICY:
-        if tags & group:
+        if found & group:
             return line
-    return _RULE_POLICY_DEFAULT
+    return ""
+
+
+def _rule_deduction(
+    item: Item,
+    bull: int,
+    bear: int,
+    bull_reason: str,
+    bear_reason: str,
+    chain: str,
+    tags: list[str] | None = None,
+) -> str:
+    """多维推演：短线情绪与资金 / 基本面与业绩 / 政策与监管 + 情景概率 + 验证点。
+
+    每条线都只写命中事件类型的版本；政策与验证点认不出来就整行省略，
+    概率永远是透明的事件类型规则权重（合计 100），不伪装成统计预测。
+    """
+    tags = _rule_event_tags(item) if tags is None else tags
+    parts = [
+        f"短线情绪与资金：{bull_reason}／{bear_reason}",
+        f"基本面与业绩：{chain}",
+    ]
+    policy = _rule_policy_line(item, tags)
+    if policy:
+        parts.append(f"政策与监管：{policy}")
+    parts.append(f"偏多 {bull}% / 偏空 {bear}%")
+    focus = _rule_focus(item, tags).rstrip("。")
+    if focus:
+        parts.append(f"关键验证点：{focus}")
+    return "；".join(parts)
 
 
 def _rule_fact_check(item: Item) -> str:
@@ -679,24 +746,22 @@ _RULE_SCENARIOS: tuple[tuple[frozenset[str], int, str, str, str], ...] = (
 )
 
 
-def _rule_scenario(item: Item) -> tuple[int, int, str, str, str]:
-    from .crossref import event_tags
+def _rule_scenario_match(tags: list[str] | set[str]) -> tuple[frozenset[str], int, str, str, str] | None:
+    """命中哪一条事件类型情景权重；一条都没命中就返回 None。
 
-    tags = set(event_tags(f"{item.title} {item.summary}"))
-    for group, bull, bull_reason, bear_reason, chain in _RULE_SCENARIOS:
-        if tags & group:
-            return bull, 100 - bull, bull_reason, bear_reason, chain
-    return (
-        50,
-        50,
-        "现有事实尚不足以确认正向盈利或供需变化",
-        "信息未经充分交叉验证，仍有口径与后续进展风险",
-        "新闻披露 → 市场预期变化 → 等待经营数据或官方信息验证",
-    )
+    刻意不给「偏多 50% / 偏空 50%」的默认档：认不出事件类型时，这个概率既不是
+    中性判断也不是规则权重，只是噪音，对应的模块直接不写。
+    """
+    found = set(tags)
+    for entry in _RULE_SCENARIOS:
+        if found & entry[0]:
+            return entry
+    return None
 
 
 #: 事件类别 -> 一句人话（投资专家口吻，但不做操作建议）。
-#: 未配置大模型或调用失败时用它兜底，卡片上标「一句话」而不是「AI 一句话」。
+#: 未配置大模型或调用失败时用它兜底，卡片上标「一句话」而不是「AI 一句话」；
+#: 一类都没命中就返回空串，这一行整块不显示。
 RULE_HEADLINES: tuple[tuple[frozenset[str], str], ...] = (
     (
         frozenset({"监管", "风险警示"}),
@@ -729,40 +794,42 @@ RULE_HEADLINES: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"上市"}), "发行与上市影响的是供给和情绪，公司基本面还得单独看。"),
 )
 
-_RULE_HEADLINE_FALLBACK = "先把这条消息说了什么、由谁披露看清楚，再判断它有多重。"
-
 
 def rule_headline(item: Item) -> str:
-    """规则化的一句人话：不调用大模型，只按事件类型给出中性的大白话结论。"""
-    from .crossref import event_tags
+    """规则化的一句人话：不调用大模型，只按事件类型给出中性的大白话结论。
 
-    tags = set(event_tags(f"{item.title} {item.summary}"))
+    事件类型认不出来时返回空串 —— 「先把这条消息说了什么看清楚」这种对任何新闻
+    都成立的兜底话等于没说，宁可不显示这一行。
+    """
+    tags = set(_rule_event_tags(item))
     for group, text in RULE_HEADLINES:
         if tags & group:
             return text
-    return _RULE_HEADLINE_FALLBACK
+    return ""
 
 
-def _rule_focus(item: Item) -> str:
-    from .crossref import event_tags
+def _rule_focus(item: Item, tags: list[str] | None = None) -> str:
+    """关键验证点：按事件类型/源类别给出该看哪份公告、哪个口径。
 
-    tags = set(event_tags(f"{item.title} {item.summary}"))
+    认不出来就返回空串 —— 「留意后续是否有官方披露」对任何一条都成立，等于没说。
+    """
+    found = set(_rule_event_tags(item) if tags is None else tags)
     kind = str((item.extra or {}).get("kind") or "")
-    if tags & {"监管", "问询", "风险警示"}:
+    if found & {"监管", "问询", "风险警示"}:
         return "关注监管口径与公司后续回复公告。"
-    if tags & {"回购", "增持", "减持", "分红", "再融资", "并购重组", "停复牌", "人事", "诉讼"}:
+    if found & {"回购", "增持", "减持", "分红", "再融资", "并购重组", "停复牌", "人事", "诉讼"}:
         return "以交易所披露的公告原文为准，留意后续进展公告。"
-    if tags & {"业绩", "订单"}:
+    if found & {"业绩", "订单"}:
         return "关注定期报告与公告口径是否一致。"
-    if tags & {"宏观数据", "货币政策"}:
+    if found & {"宏观数据", "货币政策"}:
         return "以统计局/央行正式发布口径为准。"
-    if tags & {"涨停", "跌停", "异动", "拉升", "回撤"} or kind in ("盘中异动", "涨停", "快讯"):
+    if found & {"涨停", "跌停", "异动", "拉升", "回撤"} or kind in ("盘中异动", "涨停", "快讯"):
         return "盘中信号时效性强，留意是否有对应公告或消息面解释。"
-    if tags & {"转债"}:
+    if found & {"转债"}:
         return "留意转债条款公告与正股走势的对应关系。"
-    if tags & {"评级"} or kind in ("研报", "投研", "机构预期", "宏观研报", "行业研报"):
+    if found & {"评级"} or kind in ("研报", "投研", "机构预期", "宏观研报", "行业研报"):
         return "研报观点仅代表发布机构，留意其数据口径与假设。"
-    return "留意后续是否有官方渠道的进一步披露。"
+    return ""
 
 
 def clip_headline(text: str, limit: int = HEADLINE_LIMIT) -> str:
@@ -937,6 +1004,8 @@ def _fill_analysis(
     """先铺规则化兜底（一句话 + 分析），再用大模型覆盖能覆盖的部分。
 
     两段各自过同一套合规红线；被拒收的那段保留规则化文本，不假装是 AI。
+    规则化兜底说不出话时（事件类型、标的、行业概念都没匹配上）该段留空，
+    渲染层整块不显示 —— 宁可少一块，也不用通用兜底条款凑字数。
     """
     from . import crossref
 

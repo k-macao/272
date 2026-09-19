@@ -187,7 +187,10 @@ class TestQuotes(unittest.TestCase):
 class TestAnalysis(unittest.TestCase):
     def test_rule_analysis_does_not_restate_title_or_summary(self):
         """标题/摘要已在卡片上，规则化分析只补印证情况与关注点。"""
-        item = _item("很长的标题" * 5, summary="涨幅 9.98%，换手 1.57%，封单 3.76亿")
+        item = _item(
+            "宁德时代(300750)" + "很长的标题" * 5,
+            summary="涨幅 9.98%，换手 1.57%，封单 3.76亿",
+        )
         text = rule_analysis(item)
         self.assertNotIn("涨幅 9.98%", text)
         self.assertNotIn("很长的标题", text)
@@ -205,7 +208,7 @@ class TestAnalysis(unittest.TestCase):
         self.assertIn("公告原文", text)
 
     def test_rule_analysis_distinguishes_searched_and_not(self):
-        item = _item("某公司发布公告")
+        item = _item("某公司披露回购公告")
         self.assertIn("未做外部检索", rule_analysis(item))
         item.related_searched = True
         self.assertIn("外部检索均未见", rule_analysis(item))
@@ -230,7 +233,9 @@ class TestAnalysis(unittest.TestCase):
 
     def test_rule_analysis_event_skeleton_skips_source_and_title(self):
         """事件重塑只补时间/归类/板块/概念，不复述已在卡片上的来源名与标题。"""
-        item = _item("很长的标题" * 5, summary="涨幅 9.98%，换手 1.57%")
+        item = _item(
+            "宁德时代(300750)" + "很长的标题" * 5, summary="涨幅 9.98%，换手 1.57%"
+        )
         text = rule_analysis(item)
         self.assertNotIn("示例源", text)
         self.assertNotIn("很长的标题", text)
@@ -248,6 +253,72 @@ class TestAnalysis(unittest.TestCase):
         self.assertIn("监管口径", text)
         # 事实核查：没有同题报道时必须写明证据不足
         self.assertIn("观点样本不足", text)
+
+    # -- 兜底条款：没内容 / 分析不出就不显示 -------------------------------
+    UNCLASSIFIABLE = (
+        "某公司发布提示性公告",
+        "关于召开2025年第一次临时股东大会的通知",
+        "很长的标题" * 5,
+    )
+
+    def test_rule_analysis_empty_when_nothing_can_be_analyzed(self):
+        """事件类型、标的、行业概念一个都认不出：整块不显示，不写兜底条款凑字数。"""
+        for title in self.UNCLASSIFIABLE:
+            with self.subTest(title=title):
+                self.assertEqual(rule_analysis(_item(title)), "")
+
+    def test_rule_analysis_never_prints_placeholder_words(self):
+        """认不出的字段直接省略，不再出现「未归类/未识别/依据不足」这类占位文本。"""
+        for title in (
+            "宁德时代(300750)拟回购股份",
+            "7月 CPI 同比上涨0.5%",
+            "某公司发布公告",
+            "Z精达转 · 强赎提醒",
+            *self.UNCLASSIFIABLE,
+        ):
+            text = rule_analysis(_item(title))
+            for word in ("未归类", "未识别", "时间待核", "依据不足", "信息不足"):
+                self.assertNotIn(word, text)
+            # 没命中事件类型时不给概率，也就不会出现「默认 50/50」的假中性
+            if "【多维推演】" not in text:
+                self.assertNotIn("偏多", text)
+                self.assertNotIn("规则情景权重", text)
+
+    def test_rule_analysis_drops_modules_without_content(self):
+        """转债类只认得出事件归类：利弊/溯源/推演三块没内容，整块不写。"""
+        text = rule_analysis(_item("Z精达转 · 强赎提醒"))
+        self.assertIn("【事件重塑】", text)
+        self.assertIn("事件归类：转债", text)
+        self.assertIn("【事实核查】", text)
+        for field in ("【利弊挖掘】", "【深度溯源】", "【多维推演】"):
+            self.assertNotIn(field, text)
+        self.assertNotIn("规则情景权重", text)  # 没给概率就不挂这句注解
+
+    def test_rule_analysis_keeps_subject_and_sector_without_event_type(self):
+        """认得出标的与行业、认不出事件类型：只留事件重塑 + 事实核查两块真内容。"""
+        text = rule_analysis(_item("宁德时代(300750)发布公告"))
+        self.assertIn("【事件重塑】", text)
+        self.assertIn("行业板块（本地词典匹配）：电力设备", text)
+        self.assertIn("【事实核查】", text)
+        self.assertNotIn("【多维推演】", text)
+
+    def test_rule_headline_empty_when_event_type_unknown(self):
+        """认不出事件类型时不再输出「先把这条消息看清楚」这种对谁都成立的话。"""
+        for title in self.UNCLASSIFIABLE:
+            with self.subTest(title=title):
+                self.assertEqual(rule_headline(_item(title)), "")
+
+    def test_enrich_leaves_unanalyzable_item_blank(self):
+        """无 Key 时，分析不出的条目一句话与分析都留空，推送里不显示这两块。"""
+        item = _item("关于召开2025年第一次临时股东大会的通知")
+        stats = enrich_news([item], http=None, api_key="")
+        self.assertEqual(item.ai_headline, "")
+        self.assertEqual(item.ai_analysis, "")
+        self.assertFalse(item.ai_headline_from_model)
+        self.assertFalse(item.ai_analysis_from_model)
+        self.assertEqual(stats["analysis_skipped"], 1)
+        self.assertEqual(stats["headline_skipped"], 1)
+        self.assertEqual(stats["rule"], 0)
 
     def test_market_context_uses_local_sector_and_concept_dictionary(self):
         context = market_context(_item("宁德时代(300750)拟回购股份"))
@@ -491,7 +562,8 @@ class TestOneLiner(unittest.TestCase):
         self.assertIn("监管", rule_headline(_item("某公司被证监会立案调查")))
         self.assertIn("预期", rule_headline(_item("7月 CPI 同比上涨0.5%")))
         self.assertIn("研报", rule_headline(_item("某券商首次覆盖并给予买入评级")))
-        self.assertTrue(rule_headline(_item("某公司发布提示性公告")))
+        # 认不出事件类型：不写通用兜底句，整行留空由渲染层不显示
+        self.assertEqual(rule_headline(_item("某公司发布提示性公告")), "")
 
     def test_rule_headline_is_neutral(self):
         from octopus.enrich import _BANNED_ANALYSIS
@@ -642,6 +714,34 @@ class TestRenderNewsEnrichment(unittest.TestCase):
         item = _item("某公司公告")
         item.ai_analysis = "分析。"
         self.assertNotIn("一句话</span>", self._html(item))
+
+    def test_missing_analysis_omits_block(self):
+        """分析为空（规则化也分析不出）：整块不显示，卡片上不留「分析」标签。"""
+        html = self._html(_item("关于召开2025年第一次临时股东大会的通知"))
+        self.assertNotIn(">分析</span>", html)
+        self.assertNotIn(">AI 分析</span>", html)
+        self.assertNotIn("【事件重塑】", html)
+
+    def test_empty_module_rows_are_not_rendered(self):
+        """只剩空模块标签的兜底文本：不渲染空行，也不渲染只有标签的空卡片。"""
+        item = _item("某公司公告")
+        item.ai_analysis = "【事件重塑】【利弊挖掘】【事实核查】"
+        item.ai_analysis_from_model = True
+        html = self._html(item)
+        self.assertNotIn("【事件重塑】", html)
+        self.assertNotIn(">AI 分析</span>", html)
+
+    def test_partially_empty_modules_render_only_filled_rows(self):
+        item = _item("宁德时代拟回购")
+        item.ai_analysis = (
+            "【事件重塑】公司披露回购方案；【利弊挖掘】；【事实核查】观点样本不足。"
+        )
+        item.ai_analysis_from_model = True
+        html = self._html(item)
+        self.assertIn("【事件重塑】", html)
+        self.assertIn("公司披露回购方案", html)
+        self.assertIn("【事实核查】", html)
+        self.assertNotIn("【利弊挖掘】", html)  # 没内容的模块整行不显示
 
     def test_one_liner_is_escaped(self):
         item = _item("某公司公告")
