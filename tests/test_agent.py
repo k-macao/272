@@ -284,8 +284,8 @@ class TestAgentFlow(AgentTestCase):
         self.assertIn("宁德时代回购", report.html)
         self.assertIn(">分析</span>", report.html)  # 无 API Key 时规则化分析
 
-    def test_one_liner_leads_each_news_item(self):
-        """每条新闻开头都有突出显示的一句人话（无 Key 时为规则化，不假装是 AI）。"""
+    def test_ai_block_sits_at_end_of_each_news_item(self):
+        """一句人话与分析合并成一块，排在新闻最后（无 Key 时为规则化，不假装是 AI）。"""
         REGISTRY["a"] = make_source("a", "源A", ["宁德时代拟回购400亿"])
         report = self._agent(self._config()).run_once(ref=REF)
         news = report.groups[0][1][0]
@@ -294,9 +294,12 @@ class TestAgentFlow(AgentTestCase):
         self.assertIn(">一句话</span>", report.html)
         self.assertNotIn(">AI 一句话</span>", report.html)
         self.assertIn(news.ai_headline, report.html)
-        # 一句人话在标题之后、现价与详细分析之前
-        self.assertLess(report.html.index("宁德时代拟回购400亿"), report.html.index(">一句话</span>"))
-        self.assertLess(report.html.index(">一句话</span>"), report.html.index(">分析</span>"))
+        # 合并块在标题之后，且整块排在时间行之后（新闻最后）
+        title_at = report.html.index("宁德时代拟回购400亿")
+        block_at = report.html.index(">分析</span>")
+        self.assertLess(title_at, block_at)
+        self.assertLess(block_at, report.html.index(">一句话</span>"))
+        self.assertLess(report.html.index("分钟前"), block_at)
 
     def test_state_persisted_to_disk(self):
         REGISTRY["a"] = make_source("a", "源A", ["会被记住的新闻"])

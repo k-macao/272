@@ -7,15 +7,19 @@
 3. 多源检索（crossref）：先在本轮十个源之间匹配同一事件，再对最值得核实的
    若干条做外部新闻/观点检索（Google/Bing News RSS），收集同题报道与带可验证
    时间的相似观点；只有公开标题/摘要时绝不假装读过全文
-4. 证券 AI 分析：配置了 DeepSeek 则把「事件 + 行情 + 板块/概念匹配 + 网上
-   交叉材料」交给模型，写 ① 开头一句人话结论 ② 事件重塑、利弊挖掘、深度溯源、
-   多维推演（含偏多/偏空情景概率）、事实核查五个模块；否则或调用失败时使用
-   同样五模块的规则化分析，并如实标注，绝不假装用了 AI。
-   规则化兜底逐模块判断有没有真内容：认不出的字段与模块直接不写（不留
-   「未归类/未识别/依据不足」占位），事件类型、标的、行业概念一个都匹配不上时
-   整条留空，推送里这一块不显示
+4. AI 分析（一句人话 + 分析正文，渲染时合并成一块排在每条新闻最后），按三级收稿：
+   ① 证券五模块 —— 配置了 DeepSeek 就把「事件 + 发布时间 + 行情 + 板块/概念匹配 +
+      网上交叉材料」交给模型，写一句人话结论 + 事件重塑、利弊挖掘、深度溯源、
+      多维推演（含偏多/偏空情景概率）、事实核查；
+   ② 总编极简简报 —— 上一步没拿到可用产出的条目再问一次模型，换「资深新闻总编」
+      视角重塑成核心快讯 / 关键要素 / 发展脉络三段，只重整材料、不做多空研判，
+      因此通知类、名单类情报也说得出话；
+   ③ 规则化五模块 —— 没有 Key 或两次都没产出时按事件类型给规则化分析，如实标注
+      「分析」，绝不假装用了 AI；规则化兜底逐模块判断有没有真内容：认不出的字段与
+      模块直接不写（不留「未归类/未识别/依据不足」占位），事件类型、标的、行业概念
+      一个都匹配不上时整条留空，推送里这一块不显示
 
-任何一步失败只让该条缺少现价/印证/改用规则分析，不会丢条目、不会拖垮整轮推送。
+任何一步失败只让该条缺少现价/印证/降到下一级分析，不会丢条目、不会拖垮整轮推送。
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from .http import FetchError, Http
-from .models import Item
+from .models import ANALYSIS_BRIEF, ANALYSIS_RULE, ANALYSIS_SECURITY, Item
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +75,9 @@ _OVERCLAIM = ("多方证实", "多家媒体证实", "多源证实", "已获证�
 # 防止单条模型输出失控挤爆微信卡片。
 ANALYSIS_LIMIT = 560
 HEADLINE_LIMIT = 48
+#: 总编极简简报（核心快讯/关键要素/发展脉络）的长度上限：比五模块分析短，
+#: 它是「证券分析拿不到可用产出」时的兜底，只要求把材料重整清楚。
+BRIEF_LIMIT = 480
 AI_CHUNK_SIZE = 6
 AI_WORKERS = 3
 
@@ -122,10 +129,13 @@ def enrich_news(
     crossref_max_gap_hours: float = 36.0,
     ref=None,
 ) -> dict[str, int]:
-    """就地补现价、多源观点、一句人话与证券分析。返回计数，便于日志。"""
+    """就地补现价、多源观点、一句人话与 AI 分析（证券五模块 → 总编简报 → 规则化）。
+
+    返回各体裁与降级的计数，便于日志核对这一轮走了哪条路径。
+    """
     bag = [it for it in items if it is not None]
     stats = {
-        "items": len(bag), "quotes": 0, "ai": 0, "rule": 0,
+        "items": len(bag), "quotes": 0, "ai": 0, "rule": 0, "brief": 0,
         "headline_ai": 0, "headline_rule": 0,
         "analysis_skipped": 0, "headline_skipped": 0,
         "linked": 0, "searched": 0, "external_hits": 0,
@@ -175,7 +185,10 @@ def enrich_news(
         log.info("外部报道/观点检索失败（不影响推送）：%s", exc)
 
     _fill_analysis(bag, http=http, api_key=api_key, model=model)
-    stats["ai"] = sum(1 for it in bag if it.ai_analysis_from_model)
+    stats["ai"] = sum(
+        1 for it in bag if it.ai_analysis_from_model and it.ai_analysis_kind != ANALYSIS_BRIEF
+    )
+    stats["brief"] = sum(1 for it in bag if it.ai_analysis_kind == ANALYSIS_BRIEF)
     stats["rule"] = sum(1 for it in bag if it.ai_analysis and not it.ai_analysis_from_model)
     stats["headline_ai"] = sum(1 for it in bag if it.ai_headline_from_model)
     stats["headline_rule"] = sum(
@@ -994,6 +1007,126 @@ def _acceptable(item: Item, text: str) -> bool:
     return fact_corroborated or not any(w in text for w in _OVERCLAIM)
 
 
+# ---------------------------------------------------------------------------
+# 总编极简简报：证券五模块拿不到可用产出时的兜底体裁
+#   【核心快讯】一句话（50 字以内）
+#   【关键要素】· 时间 / · 地点 / · 涉事方 / · 起因
+#   【发展脉络】①②③ 按时间顺序的 3-5 个阶段
+# 与五模块分析共用同一套合规红线，另外要求「核心快讯」必须真的写出来。
+# ---------------------------------------------------------------------------
+BRIEF_FIELDS = ("【核心快讯】", "【关键要素】", "【发展脉络】")
+
+#: 简报排版断行点：三个模块标签、①-⑩ 阶段编号、以及「· 时间：」这类清单项
+_BRIEF_BREAK = re.compile(
+    r"\s*(?=【(?:核心快讯|关键要素|发展脉络)】|[①②③④⑤⑥⑦⑧⑨⑩]|·\s*\S{0,6}[:：])"
+)
+_BRIEF_LEAD_NUMBER = re.compile(r"^\s*\d{1,3}\s*(?:[.．、:：)）])\s*")
+
+
+def format_brief(text: str, limit: int = BRIEF_LIMIT) -> str:
+    """整理总编简报：模块、清单项与阶段各起一行，超长在断点处截断。
+
+    模型爱把三模块写成一行，也可能自己换行；这里统一重排，渲染层再按行转 <br>，
+    微信卡片上就是一张能扫读的极简简报。
+    """
+    body = re.sub(r"[ \t\r\f\v\u3000]+", " ", (text or "")).strip()
+    body = _BRIEF_LEAD_NUMBER.sub("", body)
+    body = _BRIEF_BREAK.sub("\n", body)
+    body = re.sub(r"\n{2,}", "\n", body).strip(" \n；;")
+    if len(body) <= limit:
+        return body
+    cut = body[:limit]
+    for sep in ("\n", "。", "；"):
+        idx = cut.rfind(sep)
+        if idx >= limit // 2:
+            return cut[:idx].rstrip(" \n；;，,、") + "…"
+    return cut.rstrip(" \n；;，,、") + "…"
+
+
+def parse_news_briefs(text: str) -> dict[int, str]:
+    """解析「1. 【核心快讯】…」编号列表，按序号返回重排好的简报。
+
+    没写出【核心快讯】的条目直接丢弃 —— 兜底也不凑字数，宁可留空不显示。
+    """
+    out: dict[int, str] = {}
+    for num, raw in _group_numbered(text).items():
+        brief = format_brief(raw)
+        if brief and BRIEF_FIELDS[0] in brief:
+            out[num] = brief
+    return out
+
+
+def _acceptable_brief(item: Item, text: str) -> bool:
+    """简报的收稿红线：共用合规红线，另外要求三个模块里至少有核心快讯。"""
+    if not _acceptable(item, text):
+        return False
+    return BRIEF_FIELDS[0] in text
+
+
+def _news_entry(item: Item, number: int):
+    """把一条情报打包成给大模型的事实包。
+
+    证券分析与总编简报共用这一份输入：行情、板块/概念词典匹配、源站发布时间，
+    以及最多六条网上材料（方括号里标明材料类型，相似观点附规则相关度）。
+    """
+    from . import crossref
+    from .ai import NewsAnalysisEntry
+
+    materials: list[str] = []
+    for rel in item.related[:6]:
+        when = f"（{rel.published_at:%m-%d %H:%M}）" if rel.published_at else ""
+        kind = {
+            "same_event": "同一事件报道",
+            "similar_viewpoint": "网上相似观点",
+            "same_subject": "同标的消息，未必同一事件",
+        }.get(rel.relation, "待核对材料")
+        similarity = (
+            f"，规则相关度 {rel.similarity:.0%}" if rel.similarity is not None else ""
+        )
+        material = f"[{kind}{similarity}] {crossref.describe_related(rel)}：{rel.title}{when}"
+        if rel.summary:
+            material += f"；搜索公开摘要：{rel.summary}"
+        materials.append(material)
+
+    context = market_context(item)
+    market_data = ""
+    if item.last_price is not None:
+        name_code = " ".join(
+            part
+            for part in ((item.price_name or "").strip(), (item.price_code or "").strip())
+            if part
+        )
+        change = "" if item.price_change is None else f"，涨跌幅 {item.price_change:+.2f}%"
+        market_data = f"{name_code + ' ' if name_code else ''}现价 {item.last_price:.2f}{change}"
+
+    return NewsAnalysisEntry(
+        number=number,
+        source=item.source_label,
+        title=item.title,
+        summary=item.summary,
+        related=tuple(materials),
+        sector=context.sector,
+        concepts=context.concepts,
+        market_data=market_data,
+        tags=tuple(str(tag) for tag in item.tags[:6]),
+        when=f"{item.published_at:%Y-%m-%d %H:%M}" if item.published_at else "",
+    )
+
+
+def _chunked(items: list[Item]) -> list[list[Item]]:
+    return [items[start : start + AI_CHUNK_SIZE] for start in range(0, len(items), AI_CHUNK_SIZE)]
+
+
+def _map_chunks(chunks: list[list[Item]], run):
+    """分块并发跑模型：既控制单次上下文，又不让全量情报串行等待。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    if len(chunks) == 1:
+        return [run(chunks[0])]
+    with ThreadPoolExecutor(max_workers=min(AI_WORKERS, len(chunks))) as pool:
+        return list(pool.map(run, chunks))
+
+
 def _fill_analysis(
     items: list[Item],
     *,
@@ -1003,16 +1136,17 @@ def _fill_analysis(
 ) -> None:
     """先铺规则化兜底（一句话 + 分析），再用大模型覆盖能覆盖的部分。
 
-    两段各自过同一套合规红线；被拒收的那段保留规则化文本，不假装是 AI。
-    规则化兜底说不出话时（事件类型、标的、行业概念都没匹配上）该段留空，
-    渲染层整块不显示 —— 宁可少一块，也不用通用兜底条款凑字数。
+    三段依次收稿，每段各自过同一套合规红线，被拒收的那段保留上一手的文本：
+    1. 规则化兜底 —— 说不出话时留空（渲染层整块不显示），绝不凑字数；
+    2. 证券五模块分析（事件重塑/利弊挖掘/深度溯源/多维推演/事实核查）+ 一句人话；
+    3. 总编极简简报（核心快讯/关键要素/发展脉络）—— 只给第 2 步没拿到可用产出的
+       条目再问一次；总编只重整材料、不做多空研判，因此几乎每条都说得出话。
     """
-    from . import crossref
-
     for item in items:
         if not item.ai_analysis:
             item.ai_analysis = rule_analysis(item)
             item.ai_analysis_from_model = False
+            item.ai_analysis_kind = ANALYSIS_RULE
         if not item.ai_headline:
             item.ai_headline = rule_headline(item)
             item.ai_headline_from_model = False
@@ -1020,59 +1154,12 @@ def _fill_analysis(
     if not (api_key or "").strip() or http is None:
         return
 
-    from concurrent.futures import ThreadPoolExecutor
-
-    from .ai import DeepSeekAI, NewsAnalysisEntry
+    from .ai import DeepSeekAI
 
     client = DeepSeekAI(api_key, model=model or "deepseek-v4-flash", http=http)
-    # 每条会携带行情、板块概念和最多六条网上材料，输出为五个分析模块；继续分块
-    # 并发，既控制单次上下文，又不让全量情报串行等待。
-    chunk_size = AI_CHUNK_SIZE
-    chunks = [items[start : start + chunk_size] for start in range(0, len(items), chunk_size)]
 
     def run_chunk(chunk: list[Item]) -> None:
-        entries: list[NewsAnalysisEntry] = []
-        for i, it in enumerate(chunk):
-            materials: list[str] = []
-            for rel in it.related[:6]:
-                when = f"（{rel.published_at:%m-%d %H:%M}）" if rel.published_at else ""
-                kind = {
-                    "same_event": "同一事件报道",
-                    "similar_viewpoint": "网上相似观点",
-                    "same_subject": "同标的消息，未必同一事件",
-                }.get(rel.relation, "待核对材料")
-                similarity = (
-                    f"，规则相关度 {rel.similarity:.0%}" if rel.similarity is not None else ""
-                )
-                material = (
-                    f"[{kind}{similarity}] {crossref.describe_related(rel)}：{rel.title}{when}"
-                )
-                if rel.summary:
-                    material += f"；搜索公开摘要：{rel.summary}"
-                materials.append(material)
-
-            context = market_context(it)
-            market_data = ""
-            if it.last_price is not None:
-                name_code = " ".join(
-                    part for part in ((it.price_name or "").strip(), (it.price_code or "").strip())
-                    if part
-                )
-                change = "" if it.price_change is None else f"，涨跌幅 {it.price_change:+.2f}%"
-                market_data = f"{name_code + ' ' if name_code else ''}现价 {it.last_price:.2f}{change}"
-            entries.append(
-                NewsAnalysisEntry(
-                    number=i + 1,
-                    source=it.source_label,
-                    title=it.title,
-                    summary=it.summary,
-                    related=tuple(materials),
-                    sector=context.sector,
-                    concepts=context.concepts,
-                    market_data=market_data,
-                    tags=tuple(str(tag) for tag in it.tags[:6]),
-                )
-            )
+        entries = [_news_entry(it, i + 1) for i, it in enumerate(chunk)]
         try:
             ok, text = client.analyze_news(entries)
         except Exception as exc:  # noqa: BLE001
@@ -1089,12 +1176,52 @@ def _fill_analysis(
             if _acceptable(item, report.analysis):
                 item.ai_analysis = report.analysis
                 item.ai_analysis_from_model = True
+                item.ai_analysis_kind = ANALYSIS_SECURITY
             if _acceptable(item, report.headline):
                 item.ai_headline = report.headline
                 item.ai_headline_from_model = True
 
-    if len(chunks) == 1:
-        run_chunk(chunks[0])
-        return
-    with ThreadPoolExecutor(max_workers=min(AI_WORKERS, len(chunks))) as pool:
-        list(pool.map(run_chunk, chunks))
+    _map_chunks(_chunked(items), run_chunk)
+    _fill_briefs([it for it in items if not it.ai_analysis_from_model], client=client)
+
+
+def _fill_briefs(items: list[Item], *, client) -> int:
+    """证券分析没拿到可用产出的条目，改问「资深新闻总编」要一份极简简报。
+
+    简报顶上「核心快讯」这一句已经替代了一句人话，所以规则化一句话同时清掉，
+    一块里不会既写通用兜底句又写具体快讯。返回补上的条数。
+    """
+    if not items:
+        return 0
+
+    def run_chunk(chunk: list[Item]) -> list[tuple[Item, str]]:
+        entries = [_news_entry(it, i + 1) for i, it in enumerate(chunk)]
+        try:
+            ok, text = client.brief_news(entries)
+        except Exception as exc:  # noqa: BLE001
+            log.info("总编简报调用失败，保留上一手文本：%s", exc)
+            return []
+        if not ok:
+            log.info("总编简报未成功：%s", text)
+            return []
+        mapping = parse_news_briefs(text)
+        hits: list[tuple[Item, str]] = []
+        for i, item in enumerate(chunk):
+            brief = mapping.get(i + 1)
+            if brief and _acceptable_brief(item, brief):
+                hits.append((item, brief))
+        return hits
+
+    filled = 0
+    for hits in _map_chunks(_chunked(items), run_chunk):
+        for item, brief in hits:
+            item.ai_analysis = brief
+            item.ai_analysis_from_model = True
+            item.ai_analysis_kind = ANALYSIS_BRIEF
+            if not item.ai_headline_from_model:
+                item.ai_headline = ""  # 核心快讯已经顶上一句人话的位置
+            filled += 1
+    if filled:
+        log.info("总编极简简报补上 %d 条（证券分析无可用产出）", filled)
+    return filled
+

@@ -10,6 +10,15 @@ from enum import Enum
 from typing import Any
 
 
+#: ``Item.ai_analysis_kind`` 的取值 —— 决定推送里那块 AI 内容挂什么标签。
+#: 规则化兜底保持空串，标签写「分析」，不假装用了大模型。
+ANALYSIS_RULE = ""
+#: 证券五模块分析：事件重塑 / 利弊挖掘 / 深度溯源 / 多维推演 / 事实核查
+ANALYSIS_SECURITY = "security"
+#: 总编极简简报：核心快讯 / 关键要素 / 发展脉络（证券分析拿不到可用产出时的兜底）
+ANALYSIS_BRIEF = "brief"
+
+
 class TimeQuality(str, Enum):
     """时间戳质量分级 —— 决定条目能否进入推送.
 
@@ -112,16 +121,19 @@ class Item:
     """本轮是否对该条做过外部报道/观点检索（区分「没搜」与「搜了没找到」）。"""
 
     ai_headline: str = ""
-    """一句人话分析（约 30 字）：投资专家口吻的大白话结论，渲染在每条新闻开头。"""
+    """一句人话分析（约 30 字）：投资专家口吻的大白话结论，与分析合并成一块渲染。"""
 
     ai_headline_from_model: bool = False
     """True = DeepSeek 生成；False = 规则化一句话（不假装用了 AI）。"""
 
     ai_analysis: str = ""
-    """证券 AI 分析：事件重塑、利弊挖掘、深度溯源、多维推演、事实核查。"""
+    """AI 分析正文：证券五模块，或总编极简简报（核心快讯/关键要素/发展脉络）。"""
 
     ai_analysis_from_model: bool = False
     """True = DeepSeek 生成；False = 规则化分析（不假装用了 AI）。"""
+
+    ai_analysis_kind: str = ANALYSIS_RULE
+    """分析正文的体裁，见 ANALYSIS_SECURITY / ANALYSIS_BRIEF；规则化兜底为空串。"""
 
     def dedupe_key(self) -> str:
         """去重键.
@@ -154,6 +166,7 @@ class Item:
             "ai_headline_from_model": self.ai_headline_from_model,
             "ai_analysis": self.ai_analysis,
             "ai_analysis_from_model": self.ai_analysis_from_model,
+            "ai_analysis_kind": self.ai_analysis_kind,
         }
 
 

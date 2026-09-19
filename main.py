@@ -27,6 +27,7 @@ from pathlib import Path
 
 from octopus.agent import Agent
 from octopus.config import Config
+from octopus.models import ANALYSIS_BRIEF
 from octopus.timeutil import now, quiet_remaining_seconds, stamp
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -215,9 +216,6 @@ def _print_summary(report) -> None:
         for item in items:
             when = f"{item.published_at:%m-%d %H:%M}" if item.published_at else "??"
             bits = [f"  · {when} [{item.time_quality.value:7s}] {item.title[:60]}"]
-            if item.ai_headline:
-                tag = "AI一句话" if item.ai_headline_from_model else "一句话"
-                bits.append(f"    {tag} {item.ai_headline}")
             if item.last_price is not None:
                 chg = "" if item.price_change is None else f" {item.price_change:+.2f}%"
                 bits.append(f"    现价 {item.price_name or item.price_code} {item.last_price:.2f}{chg}")
@@ -231,9 +229,26 @@ def _print_summary(report) -> None:
                 bits.append(f"    多源/观点 {describe_related(rel)}：{rel.title[:50]}{when}{note}")
             if not item.related and item.related_searched:
                 bits.append("    多源/观点 单一来源（外部检索未见同题报道或相似观点）")
+            # AI 那一块（一句人话 + 分析）合并后同样排在每条最后
             if item.ai_analysis:
-                tag = "AI分析" if item.ai_analysis_from_model else "分析"
-                bits.append(f"    {tag} {item.ai_analysis}")
+                if not item.ai_analysis_from_model:
+                    tag = "分析"
+                elif item.ai_analysis_kind == ANALYSIS_BRIEF:
+                    tag = "AI简报"
+                else:
+                    tag = "AI分析"
+            elif item.ai_headline:
+                tag = "AI一句话" if item.ai_headline_from_model else "一句话"
+            else:
+                tag = ""
+            if tag:
+                if item.ai_headline:
+                    lead = "AI一句话" if item.ai_headline_from_model else "一句话"
+                    bits.append(f"    {tag}｜{lead} {item.ai_headline}")
+                else:
+                    bits.append(f"    {tag}")
+                if item.ai_analysis:
+                    bits.append(f"      {item.ai_analysis}")
             print("\n".join(bits))
     print()
 

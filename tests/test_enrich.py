@@ -20,15 +20,24 @@ from octopus.enrich import (
     enrich_news,
     extract_tickers,
     fetch_quotes,
+    format_brief,
     market_context,
     parse_news_analyses,
+    parse_news_briefs,
     parse_news_reports,
     rule_analysis,
     rule_headline,
     split_headline_and_analysis,
 )
 from octopus.http import FetchError
-from octopus.models import Item, RelatedNews, SourceResult, TimeQuality
+from octopus.models import (
+    ANALYSIS_BRIEF,
+    ANALYSIS_SECURITY,
+    Item,
+    RelatedNews,
+    SourceResult,
+    TimeQuality,
+)
 from octopus.render import render_html
 from octopus.timeutil import CN_TZ
 
@@ -510,8 +519,190 @@ class TestAnalysis(unittest.TestCase):
         self.assertTrue(any("news.google.com" in c or "bing.com" in c for c in http.calls))
 
 
+class TestBriefFallback(unittest.TestCase):
+    """总编极简简报：证券分析没内容时的兜底体裁（核心快讯/关键要素/发展脉络）。"""
+
+    BRIEF_TEXT = (
+        "1. 【核心快讯】公司拟以自有资金回购不超过 40 亿元股份。\n"
+        "   【关键要素】· 时间：9 月 19 日；· 地点：未提及；"
+        "· 涉事方：宁德时代、董事会；· 起因：股价低于内在价值\n"
+        "   【发展脉络】① 董事会通过回购议案；② 公告披露上限 40 亿元；"
+        "③ 待股东大会审议（据材料推断）\n"
+    )
+
+    def _http(self, security_text: str, brief_text: str) -> MagicMock:
+        """两次模型调用：证券五模块在前，总编简报兜底在后。"""
+        from octopus.ai import NEWS_BRIEF_PROMPT
+
+        http = MagicMock()
+        http.json.side_effect = FetchError("offline")
+        http.text.side_effect = FetchError("offline")
+
+        def post_json(url, payload, headers=None):
+            system = payload["messages"][0]["content"]
+            content = brief_text if system == NEWS_BRIEF_PROMPT else security_text
+            return {"choices": [{"message": {"content": content}}]}
+
+        http.post_json.side_effect = post_json
+        return http
+
+    def test_format_brief_breaks_modules_and_items(self):
+        text = format_brief(
+            "1. 【核心快讯】公司拟回购。 【关键要素】· 时间：9月19日；· 地点：未提及；"
+            "· 涉事方：公司；· 起因：股价偏低 【发展脉络】① 董事会通过；② 公告披露"
+        )
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "【核心快讯】公司拟回购。")
+        self.assertIn("【关键要素】", lines[1])
+        self.assertTrue(any(line.startswith("· 时间：") for line in lines))
+        self.assertTrue(any(line.startswith("① ") for line in lines))
+        self.assertTrue(any(line.startswith("② ") for line in lines))
+        self.assertFalse(text.startswith("1."))  # 编号残留清掉
+
+    def test_format_brief_truncates_at_break_point(self):
+        long = "【核心快讯】一句话。" + "【发展脉络】① 阶段说明。" * 60
+        text = format_brief(long, limit=200)
+        self.assertLessEqual(len(text), 201)
+        self.assertTrue(text.endswith("…"))
+
+    def test_parse_news_briefs_by_number(self):
+        mapping = parse_news_briefs(
+            "1. 【核心快讯】第一条。\n   【关键要素】· 时间：未提及\n"
+            "2. 【核心快讯】第二条。\n   【发展脉络】① 阶段\n"
+            "3. 只有正文没有模块的第三条\n"
+        )
+        self.assertEqual(set(mapping), {1, 2})  # 没写【核心快讯】的丢掉
+        self.assertIn("【关键要素】", mapping[1])
+        self.assertIn("① 阶段", mapping[2])
+
+    def test_brief_used_when_security_analysis_unusable(self):
+        """证券分析被合规红线拒收：改问总编，简报顶上，标签变成 AI 简报。"""
+        item = _item("宁德时代拟回购400亿", summary="公司公告回购。")
+        stats = enrich_news(
+            [item],
+            http=self._http("1. 一句话：建议买入，稳赚不赔。分析：建议买入。", self.BRIEF_TEXT),
+            api_key="sk-test",
+            crossref_mode="off",
+        )
+        self.assertTrue(item.ai_analysis_from_model)
+        self.assertEqual(item.ai_analysis_kind, ANALYSIS_BRIEF)
+        self.assertIn("【核心快讯】", item.ai_analysis)
+        self.assertIn("【发展脉络】", item.ai_analysis)
+        self.assertNotIn("买入", item.ai_analysis)
+        self.assertEqual(stats["brief"], 1)
+        self.assertEqual(stats["ai"], 0)
+        self.assertEqual(stats["rule"], 0)
+
+    def test_brief_used_when_analysis_cannot_be_produced(self):
+        """规则化也分析不出的通知类条目：总编简报补上，不再是空白。"""
+        item = _item("关于召开2025年第一次临时股东大会的通知")
+        self.assertEqual(rule_analysis(item), "")  # 前置条件：规则化无话可说
+        stats = enrich_news(
+            [item], http=self._http("（模型没返回这条）", self.BRIEF_TEXT),
+            api_key="sk-test", crossref_mode="off",
+        )
+        self.assertEqual(item.ai_analysis_kind, ANALYSIS_BRIEF)
+        self.assertIn("【核心快讯】", item.ai_analysis)
+        self.assertEqual(stats["analysis_skipped"], 0)
+        self.assertEqual(stats["brief"], 1)
+
+    def test_brief_replaces_rule_headline(self):
+        """核心快讯已经顶上一句人话的位置，规则化通用句同时清掉。"""
+        item = _item("宁德时代拟回购400亿")
+        enrich_news(
+            [item], http=self._http("（无产出）", self.BRIEF_TEXT),
+            api_key="sk-test", crossref_mode="off",
+        )
+        self.assertEqual(item.ai_headline, "")
+        self.assertFalse(item.ai_headline_from_model)
+
+    def test_model_headline_kept_next_to_brief(self):
+        """模型写过一句人话、分析被拒收：一句话保留，与简报合并成一块。"""
+        item = _item("宁德时代拟回购400亿")
+        enrich_news(
+            [item],
+            http=self._http(
+                "1. 一句话：回购分量取决于执行规模。\n   分析：建议买入，稳赚不赔。",
+                self.BRIEF_TEXT,
+            ),
+            api_key="sk-test",
+            crossref_mode="off",
+        )
+        self.assertEqual(item.ai_headline, "回购分量取决于执行规模。")
+        self.assertTrue(item.ai_headline_from_model)
+        self.assertEqual(item.ai_analysis_kind, ANALYSIS_BRIEF)
+
+    def test_banned_brief_rejected_keeps_rule_text(self):
+        item = _item("宁德时代拟回购400亿")
+        enrich_news(
+            [item],
+            http=self._http("（无产出）", "1. 【核心快讯】建议买入，稳赚不赔。"),
+            api_key="sk-test",
+            crossref_mode="off",
+        )
+        self.assertFalse(item.ai_analysis_from_model)
+        self.assertNotIn("买入", item.ai_analysis)
+        self.assertIn("【事件重塑】", item.ai_analysis)  # 保留规则化五模块
+
+    def test_brief_overclaim_rejected_on_single_source(self):
+        item = _item("某公司拟回购")
+        enrich_news(
+            [item],
+            http=self._http("（无产出）", "1. 【核心快讯】该消息已获多方证实。"),
+            api_key="sk-test",
+            crossref_mode="off",
+        )
+        self.assertFalse(item.ai_analysis_from_model)
+        self.assertNotIn("多方证实", item.ai_analysis)
+
+    def test_brief_not_called_when_security_analysis_ok(self):
+        from octopus.ai import NEWS_BRIEF_PROMPT
+
+        item = _item("宁德时代拟回购400亿")
+        http = self._http(
+            "1. 一句话：回购分量看执行。\n   分析：【事件重塑】公司披露回购；"
+            "【利弊挖掘】股东受益；【深度溯源】现金充裕；"
+            "【多维推演】偏多 62% / 偏空 38%；【事实核查】观点样本不足。",
+            self.BRIEF_TEXT,
+        )
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        self.assertEqual(item.ai_analysis_kind, ANALYSIS_SECURITY)
+        systems = [c[0][1]["messages"][0]["content"] for c in http.post_json.call_args_list]
+        self.assertNotIn(NEWS_BRIEF_PROMPT, systems)  # 有产出就不必再问一次
+
+    def test_no_brief_without_api_key(self):
+        item = _item("关于召开2025年第一次临时股东大会的通知")
+        http = self._http("（不会用到）", self.BRIEF_TEXT)
+        stats = enrich_news([item], http=http, api_key="", crossref_mode="off")
+        http.post_json.assert_not_called()
+        self.assertEqual(item.ai_analysis, "")  # 分析不出：整块不显示
+        self.assertEqual(stats["brief"], 0)
+        self.assertEqual(stats["analysis_skipped"], 1)
+
+    def test_brief_sends_publish_time_and_materials(self):
+        """总编要梳理发展脉络，输入里必须带发布时间与已检索到的公开材料。"""
+        from octopus.ai import NEWS_BRIEF_PROMPT
+
+        item = _item("宁德时代拟回购400亿", summary="公司公告回购。")
+        item.related.append(
+            RelatedNews(source_label="证券时报", title="宁德时代披露回购", relation="same_event")
+        )
+        http = self._http("（无产出）", self.BRIEF_TEXT)
+        enrich_news([item], http=http, api_key="sk-test", crossref_mode="off")
+        brief_calls = [
+            c for c in http.post_json.call_args_list
+            if c[0][1]["messages"][0]["content"] == NEWS_BRIEF_PROMPT
+        ]
+        self.assertEqual(len(brief_calls), 1)
+        user = brief_calls[0][0][1]["messages"][1]["content"]
+        self.assertIn("发布时间 2026-07-27 10:25", user)
+        self.assertIn("标题：宁德时代拟回购400亿", user)
+        self.assertIn("公司公告回购。", user)
+        self.assertIn("证券时报", user)
+
+
 class TestOneLiner(unittest.TestCase):
-    """每条新闻开头的一句人话：模型产出解析、规则化兜底与合规红线。"""
+    """每条新闻的一句人话：模型产出解析、规则化兜底与合规红线。"""
 
     MODEL_TEXT = (
         "1. 一句话：公司自己掏钱回购，等于管理层觉得现在不贵。\n"
@@ -687,21 +878,45 @@ class TestRenderNewsEnrichment(unittest.TestCase):
         self.assertNotIn("<b>x</b>", html)
         self.assertNotIn("javascript:", html)
 
-    def test_one_liner_highlighted_at_top_of_item(self):
-        """一句人话排在现价 / 多源 / AI 分析之前，且用深底高亮。"""
+    def test_ai_block_merges_one_liner_and_analysis_at_end(self):
+        """一句人话与分析合并成一块，排在现价 / 多源 / 时间 / 标签之后（新闻最后）。"""
         item = _item("宁德时代拟回购")
         item.last_price = 188.5
         item.price_code = "300750"
+        item.tags = ["回购"]
         item.ai_headline = "公司自己掏钱回购，等于管理层觉得现在不贵。"
         item.ai_headline_from_model = True
-        item.ai_analysis = "事件要点：公司公告拟回购。"
+        item.ai_analysis = "【事件重塑】公司公告拟回购；【事实核查】观点样本不足。"
         item.ai_analysis_from_model = True
+        item.ai_analysis_kind = ANALYSIS_SECURITY
         html = self._html(item)
         self.assertIn(">AI 一句话</span>", html)
+        self.assertIn(">AI 分析</span>", html)
         self.assertIn("公司自己掏钱回购，等于管理层觉得现在不贵。", html)
-        self.assertIn("#1c1f23", html)  # 深底高亮
-        self.assertLess(html.index(">AI 一句话</span>"), html.index(">现价</span>"))
-        self.assertLess(html.index(">AI 一句话</span>"), html.index(">AI 分析</span>"))
+        self.assertIn("#1c1f23", html)  # 一句人话仍用深底高亮
+        # 合并块整体在新闻最后：一句话在现价与多源之后，块级标签在两句正文之前
+        self.assertLess(html.index(">现价</span>"), html.index(">AI 一句话</span>"))
+        self.assertLess(html.index(">AI 分析</span>"), html.index(">AI 一句话</span>"))
+        self.assertLess(html.index(">AI 一句话</span>"), html.index("【事件重塑】"))
+        self.assertGreater(html.index(">AI 分析</span>"), html.index(">回购</span>"))
+
+    def test_brief_block_is_labelled_as_brief(self):
+        """总编极简简报挂「AI 简报」标签，三个模块分行排版。"""
+        item = _item("关于召开2025年第一次临时股东大会的通知")
+        item.ai_analysis = (
+            "【核心快讯】公司定于下月召开临时股东大会审议多项议案。\n"
+            "【关键要素】· 时间：未提及；· 地点：未提及；\n"
+            "· 涉事方：公司；· 起因：常规治理安排\n"
+            "【发展脉络】① 董事会提议；② 通知公告发出"
+        )
+        item.ai_analysis_from_model = True
+        item.ai_analysis_kind = ANALYSIS_BRIEF
+        html = self._html(item)
+        self.assertIn(">AI 简报</span>", html)
+        self.assertNotIn(">AI 分析</span>", html)
+        for label in ("【核心快讯】", "【关键要素】", "【发展脉络】"):
+            self.assertIn(label, html)
+        self.assertIn("<br>", html)  # 清单项分行，不糊成一段
 
     def test_rule_one_liner_does_not_pretend_to_be_ai(self):
         item = _item("某公司公告")

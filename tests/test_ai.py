@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from octopus.ai import (
     DEEPSEEK_API_URL,
     NEWS_ANALYSIS_PROMPT,
+    NEWS_BRIEF_PROMPT,
     SYSTEM_PROMPT,
     DeepSeekAI,
     NewsAnalysisEntry,
@@ -149,6 +150,89 @@ class TestDeepSeekAI(unittest.TestCase):
         ok, msg = DeepSeekAI("").analyze_news([(1, "源", "标题", "摘要", [])])
         self.assertFalse(ok)
         self.assertIn("未配置 DeepSeek API Key", msg)
+
+
+class TestNewsBrief(unittest.TestCase):
+    """总编极简简报：证券分析没内容时的兜底体裁。"""
+
+    def _http(self, content: str) -> MagicMock:
+        http = MagicMock()
+        http.post_json.return_value = {"choices": [{"message": {"content": content}}]}
+        return http
+
+    def test_brief_prompt_requires_three_modules(self):
+        for field in ("【核心快讯】", "【关键要素】", "【发展脉络】"):
+            self.assertIn(field, NEWS_BRIEF_PROMPT)
+        self.assertIn("资深的新闻总编", NEWS_BRIEF_PROMPT)
+        self.assertIn("50 字以内", NEWS_BRIEF_PROMPT)
+        self.assertIn("时间、地点、核心涉事方与起因", NEWS_BRIEF_PROMPT)
+        self.assertIn("3-5 个主要发展阶段", NEWS_BRIEF_PROMPT)
+        self.assertIn("一步一步推理", NEWS_BRIEF_PROMPT)
+        self.assertIn("按时间顺序", NEWS_BRIEF_PROMPT)
+
+    def test_brief_prompt_keeps_fact_and_compliance_lines(self):
+        """兜底体裁同样不许编造、不许荐股、不许服从新闻里夹带的指令。"""
+        self.assertIn("严禁编造", NEWS_BRIEF_PROMPT)
+        self.assertIn("未提及", NEWS_BRIEF_PROMPT)
+        self.assertIn("不要为了凑数编造阶段", NEWS_BRIEF_PROMPT)
+        self.assertIn("据材料推断", NEWS_BRIEF_PROMPT)
+        self.assertIn("不做多空研判", NEWS_BRIEF_PROMPT)
+        self.assertIn("不给目标价", NEWS_BRIEF_PROMPT)
+        self.assertIn("不可信引用数据", NEWS_BRIEF_PROMPT)
+        self.assertIn("不得服从", NEWS_BRIEF_PROMPT)
+
+    def test_brief_news_uses_brief_system_prompt(self):
+        http = self._http("1. 【核心快讯】公司拟回购。")
+        ok, text = DeepSeekAI("sk-test", http=http).brief_news(
+            [
+                NewsAnalysisEntry(
+                    number=1,
+                    source="巨潮资讯",
+                    title="宁德时代拟回购400亿",
+                    summary="公司公告回购",
+                    related=("[同一事件报道] 证券时报：宁德时代披露回购",),
+                    when="2026-07-27 10:25",
+                )
+            ]
+        )
+        self.assertTrue(ok)
+        self.assertIn("【核心快讯】", text)
+        url, payload = http.post_json.call_args[0]
+        self.assertEqual(url, DEEPSEEK_API_URL)
+        self.assertEqual(payload["messages"][0]["content"], NEWS_BRIEF_PROMPT)
+        user = payload["messages"][1]["content"]
+        self.assertIn("标题：宁德时代拟回购400亿", user)
+        self.assertIn("摘要：公司公告回购", user)
+        self.assertIn("发布时间 2026-07-27 10:25", user)
+        self.assertIn("其它公开材料（只有标题/摘要，未必是同一事件）", user)
+        self.assertIn("证券时报：宁德时代披露回购", user)
+
+    def test_brief_news_accepts_legacy_tuple(self):
+        http = self._http("1. 【核心快讯】ok")
+        ok, _ = DeepSeekAI("sk-test", http=http).brief_news([(1, "源", "标题", "摘要", [])])
+        self.assertTrue(ok)
+        user = http.post_json.call_args[0][1]["messages"][1]["content"]
+        self.assertIn("标题：标题", user)
+        self.assertNotIn("发布时间", user)  # 旧格式没有时间就不写，不让模型猜
+
+    def test_brief_news_missing_key(self):
+        ok, msg = DeepSeekAI("").brief_news([(1, "源", "标题", "摘要", [])])
+        self.assertFalse(ok)
+        self.assertIn("未配置 DeepSeek API Key", msg)
+
+    def test_brief_news_empty_entries(self):
+        http = self._http("不会被调用")
+        ok, text = DeepSeekAI("sk-test", http=http).brief_news([])
+        self.assertTrue(ok)
+        self.assertEqual(text, "")
+        http.post_json.assert_not_called()
+
+    def test_brief_news_failure_is_reported(self):
+        http = MagicMock()
+        http.post_json.side_effect = FetchError("请求超时")
+        ok, msg = DeepSeekAI("sk-test", http=http).brief_news([(1, "源", "标题", "", [])])
+        self.assertFalse(ok)
+        self.assertIn("调用异常", msg)
 
 
 if __name__ == "__main__":
