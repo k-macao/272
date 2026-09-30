@@ -60,6 +60,15 @@ class TestRenderManual(unittest.TestCase):
         self.assertIn("▍正文", html)
         self.assertIn("纯内容文本", html)
 
+    def test_eink_layout_splits_long_plain_text_into_300_by_400_pages(self):
+        content = "这是一段需要在墨水屏分页显示的分析内容。" * 100
+        rendered = render_manual("分页测试", content, ref=REF, markdown=False)
+        self.assertIn("width:300px;max-width:100%;min-height:400px", rendered)
+        self.assertGreater(rendered.count("min-height:400px"), 4)
+        self.assertIn("（续 2）", rendered)
+        self.assertNotIn("#b7ff26", rendered)
+        self.assertIn("这是一段需要在墨水屏分页显示的分析内容。", rendered)
+
 
 class TestRenderManualTitle(unittest.TestCase):
     def test_title_with_topic(self):

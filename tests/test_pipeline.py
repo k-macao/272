@@ -189,8 +189,9 @@ class TestRender(unittest.TestCase):
             self._groups(), total=2, window_minutes=180, ref=REF,
             failures=[], degraded=[],
         )
-        self.assertIn("#eceef0", html)   # 浅灰卡片底
-        self.assertIn("#111111", html)   # 正文主色
+        self.assertIn("#ffffff", html)   # 墨水屏白底
+        self.assertIn("width:300px;max-width:100%;min-height:400px", html)
+        self.assertIn("#111111", html)   # 黑色正文与边框
         self.assertIn("章鱼 AI", html)
 
     def test_html_contains_items_and_times(self):
@@ -201,6 +202,8 @@ class TestRender(unittest.TestCase):
         self.assertIn("宁德时代拟回购400亿", html)
         self.assertIn("12分钟前", html)
         self.assertIn("07-27 10:18", html)
+        # 标题页、两条独立情报页与页脚页各自占一张卡片页。
+        self.assertEqual(html.count("min-height:400px"), 4)
 
     def test_hides_all_source_section_headings_but_keeps_items(self):
         """来源标题整级隐藏：正文不出现任何同级来源标题，条目一条不少。"""

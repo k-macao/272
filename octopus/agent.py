@@ -247,7 +247,7 @@ class Agent:
             ai_model=ai_model,
         )
         title = render_merge_title(merged.topic, ref, len(merged.sources))
-        pushed = self._push(title, html, dry_run=dry_run, topics=[])
+        pushed = self._push(title, html, dry_run=dry_run)
         log.info("=== 合并报告推送：%d 源 -> %s：%s", len(merged.sources), merged.topic, "成功" if pushed else "未执行/失败")
         return RunReport(
             total=len(merged.sources),
@@ -310,7 +310,7 @@ class Agent:
 
         支持自动调用 DeepSeek 大模型进行提炼、分类或摘要（如配置了 DEEPSEEK_API_KEY）。
         恒为**一对一**：只推给 token 所属账号本人（PushPlus 个人推送），
-        不携带群组 topic，与 config.pushplus_topics（一对多）互不影响。
+        不携带群组 topic；旧版 config.pushplus_topics 配置会被忽略。
         """
         ref = ref or now()
         ai_summary, ai_model = self._refine_manual(topic, content) if use_ai else ("", "")
@@ -322,7 +322,7 @@ class Agent:
             ai_model=ai_model,
         )
         title = render_manual_title(topic, ref)
-        pushed = self._push(title, html, dry_run=dry_run, topics=[])
+        pushed = self._push(title, html, dry_run=dry_run)
         log.info("=== 手动主题分析：推送 %s", "成功" if pushed else "未执行/失败")
         return RunReport(
             total=1 if (content or "").strip() else 0,
@@ -391,7 +391,7 @@ class Agent:
         analysis = self.analyze_theme(topic, ref=ref, use_ai=use_ai)
         html = render_theme(analysis, ref=ref)
         title = render_theme_title(topic, analysis, ref=ref)
-        pushed = self._push(title, html, dry_run=dry_run, topics=[])
+        pushed = self._push(title, html, dry_run=dry_run)
         log.info("=== 主题因子分析：推送 %s", "成功" if pushed else "未执行/失败")
         report = RunReport(
             total=len(analysis.profiles),
@@ -447,16 +447,15 @@ class Agent:
             log.warning("情报增强失败（不影响推送）：%s", exc)
 
     # ------------------------------------------------------------------
-    def _push(self, title: str, html: str, *, dry_run: bool, topics: list[str] | None = None) -> bool:
+    def _push(self, title: str, html: str, *, dry_run: bool) -> bool:
         if not self.config.pushplus_token:
             log.error("未配置 PUSHPLUS_TOKEN，无法推送")
             return False
-        # topics=None 时跟随配置（一对多群组）；显式传 [] 则一对一推给自己
-        topics_to_use = self.config.pushplus_topics if topics is None else topics
+        # 全部业务推送固定为个人推送，不读取旧版群组 topic 配置。
         pusher = PushPlus(
             self.http,
             self.config.pushplus_token,
-            topics=topics_to_use,
+            topics=[],
         )
         return pusher.send(title, html, dry_run=dry_run)
 

@@ -1,7 +1,7 @@
-"""推送 HTML 渲染 —— 电子杂志 × 电子墨水风格。
+"""推送 HTML 渲染 —— 300×400 黑白电子墨水卡片页。
 
-微信内置浏览器会剥掉 <style> 标签，所有样式必须写成内联 style，
-且避免用 flex/grid 这类支持不稳的布局，一律用 table/div + 内联属性。
+微信内置浏览器会剥掉 <style> 标签，所有样式必须写成内联 style；
+避免依赖脚本、flex/grid 和颜色差异，使用高对比灰阶与基础 div/table 布局。
 """
 
 from __future__ import annotations
@@ -15,31 +15,31 @@ from urllib.parse import urlsplit
 from .models import ANALYSIS_BRIEF, Item, SourceResult, TimeQuality
 from .timeutil import humanize, stamp
 
-# --- 配色 ------------------------------------------------------------------
-BG = "#d2d5d8"          # 深浅灰主背景
-CARD_BG = "#eceef0"     # 浅灰卡片底
-#: 相邻两条情报的底色一深一浅交替（见 _row_bg）：前后两条不必盯着细虚线找边界，
-#: 一眼就能分清哪一块是哪条。两档都刻意偏离卡片底，单独出现时也不会糊在卡片上。
-ROW_BG_A = "#dfe4e7"    # 奇数条：深一档的浅灰
-ROW_BG_B = "#f8f9fa"    # 偶数条：浅一档的近白
-NAVY = "#111111"        # 正文主色：黑
-NAVY_DEEP = "#090909"   # 标题黑
-NAVY_SOFT = "#5b5f64"   # 次要信息灰
-BORDER = "#a4a9ae"
-ACCENT = "#b7ff26"      # 荧光绿
-ACCENT_BG = "#202327"   # 荧光绿文字底色（深底 + 荧光绿字，保证可读）
-ACCENT_WASH = "#edf8d1" # 荧光绿浅点缀（仅用于非荧光绿文字的背景/边框）
-SURFACE_ALT = "#ccd2d6" # 灰色辅助底（比 ROW_BG_A 深一档，压在交替底色上仍能看清）
-CODE_BG = "#181a1d"
-CODE_TEXT = "#eff6df"
-HEADLINE_BG = "#1c1f23"   # 一句人话的深底（每条新闻开头，全页最突出）
-HEADLINE_TEXT = "#f2f7e6" # 深底上的浅色正文
-QUOTE_BG = "#e1e4e7"
-WARN_BG = "#e7e1de"
-WARN_BORDER = "#c9beb9"
-WARN_TEXT = "#695149"
-RED = "#a63a2b"         # 风险/警示
-GREEN = "#2c6b4f"
+# --- 电子墨水屏配色 --------------------------------------------------------
+# 只使用黑、白与高对比灰阶；红绿等状态不依赖色相区分，避免灰阶屏上混成一片。
+BG = "#ffffff"
+CARD_BG = "#fafafa"
+ROW_BG_A = "#e6e6e6"
+ROW_BG_B = "#ffffff"
+NAVY = "#111111"
+NAVY_DEEP = "#000000"
+NAVY_SOFT = "#444444"
+BORDER = "#111111"
+ACCENT = "#111111"
+ACCENT_TEXT = "#ffffff"
+ACCENT_BG = "#111111"
+ACCENT_WASH = "#eeeeee"
+SURFACE_ALT = "#eeeeee"
+CODE_BG = "#eeeeee"
+CODE_TEXT = "#111111"
+HEADLINE_BG = "#111111"
+HEADLINE_TEXT = "#ffffff"
+QUOTE_BG = "#eeeeee"
+WARN_BG = "#eeeeee"
+WARN_BORDER = "#111111"
+WARN_TEXT = "#111111"
+RED = "#111111"
+GREEN = "#111111"
 
 #: 全部推送统一使用的固定标题：微信通知栏横幅只显示这一行，
 #: 定时抓取、手动分析、合并研报、主题因子分析四种推送共用同一口径。
@@ -58,7 +58,7 @@ MANUAL_FOOTER_NOTE = (
 TIME_BADGE = {
     TimeQuality.EXACT: ("准确", ACCENT),
     TimeQuality.DERIVED: ("推算", NAVY_SOFT),
-    TimeQuality.DATE: ("当日", "#7a766d"),
+    TimeQuality.DATE: ("当日", "#444444"),
 }
 
 # 每张顶层卡片之间插入一个不可见标记。PushPlus 正文过长时，通知层只在
@@ -67,14 +67,23 @@ HTML_BLOCK_SEPARATOR = "<!--octopus:block-->"
 
 
 def _document(cards: list[str]) -> str:
-    """把顶层卡片拼成完整正文，并保留安全分页边界。"""
+    """把各内容块输出为 300×400 电子墨水卡片页，保留安全分页边界。
+
+    页面固定为 300px 宽、至少 400px 高。使用 min-height 而不是裁切/内嵌滚动，
+    遇到长内容时卡片会自然延长，确保低性能墨水屏浏览器也不会吞掉正文。
+    """
     outer = (
-        f'<div style="background:{BG};padding:12px 10px;'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
-        f'\'Helvetica Neue\',Helvetica,Arial,sans-serif;color:{NAVY};'
-        f'line-height:1.72;font-size:13px;word-break:break-word;">'
+        f'<div style="width:300px;max-width:100%;margin:0 auto;padding:0;'
+        f'background:{BG};font-family:Arial,Helvetica,sans-serif;color:{NAVY};'
+        f'line-height:1.55;font-size:13px;word-break:break-word;overflow-wrap:anywhere;">'
     )
-    return outer + HTML_BLOCK_SEPARATOR.join(cards) + "</div>"
+    pages = [
+        f'<div style="width:300px;max-width:100%;min-height:400px;box-sizing:border-box;'
+        f'margin:0 auto 10px;padding:10px;background:{BG};color:{NAVY};'
+        f'border:1px solid {BORDER};overflow-wrap:anywhere;">{card}</div>'
+        for card in cards
+    ]
+    return outer + HTML_BLOCK_SEPARATOR.join(pages) + "</div>"
 
 
 def render_html(
@@ -92,9 +101,9 @@ def render_html(
     if total == 0:
         cards.append(_empty_card(window_minutes))
     else:
-        for result, items in groups:
-            if items:
-                cards.append(_section(result, items, ref))
+        # 一条情报一页，避免把同一来源的多条新闻挤进一张超长卡片。
+        for _result, items in groups:
+            cards.extend(_row(item, ref, index=i) for i, item in enumerate(items))
 
     cards.append(_footer(ref, failures, degraded, window_minutes))
     return _document(cards)
@@ -112,7 +121,7 @@ def _header(total: int, window_minutes: int, ref: datetime) -> str:
         f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:6px;">'
         f'扫描时间 {stamp(ref)}（北京时间）</div>'
         f'<div style="font-size:13px;color:{NAVY_SOFT};margin-top:3px;">'
-        f'本轮新增 <b style="background:{ACCENT_BG};color:{ACCENT};'
+        f'本轮新增 <b style="background:{ACCENT_BG};color:{ACCENT_TEXT};'
         f'padding:1px 6px;border-radius:3px;font-size:15px;">{total}</b> 条'
         f' · 时间窗口 {window_text} · 全部条目已校验发布时间</div>'
         f"</div>"
@@ -160,7 +169,7 @@ def _row(item: Item, ref: datetime, *, index: int = 0) -> str:
     badge_text, badge_color = TIME_BADGE.get(item.time_quality, ("", NAVY_SOFT))
 
     meta = (
-        f'<span style="background:{ACCENT_BG};color:{ACCENT};'
+        f'<span style="background:{ACCENT_BG};color:{ACCENT_TEXT};'
         f'padding:1px 6px;border-radius:3px;font-weight:600;">{when}</span>'
         f'<span style="color:{NAVY_SOFT};"> · {exact}</span>'
     )
@@ -174,7 +183,7 @@ def _row(item: Item, ref: datetime, *, index: int = 0) -> str:
     tags_html = ""
     if item.tags:
         chips = "".join(
-            f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+            f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT_TEXT};'
             f'border-radius:3px;padding:1px 6px;margin:0 4px 0 0;font-size:11px;">'
             f"{html.escape(str(tag))}</span>"
             for tag in item.tags[:3]
@@ -190,7 +199,7 @@ def _row(item: Item, ref: datetime, *, index: int = 0) -> str:
     summary_text = (item.summary or "").strip()
     if summary_text and summary_text not in analysis_text:
         summary_html = (
-            f'<div style="font-size:13px;color:{NAVY};opacity:.85;margin-top:4px;">'
+            f'<div style="font-size:13px;color:{NAVY};margin-top:4px;">'
             f"{html.escape(summary_text)}</div>"
         )
 
@@ -207,12 +216,12 @@ def _row(item: Item, ref: datetime, *, index: int = 0) -> str:
 
 
 def _headline_line(text: str, label: str = "") -> str:
-    """一句人话：深底 + 荧光绿左边条，在合并块里当引子，一眼就能扫到。
+    """一句人话：黑底 + 白字，在合并块里当引子，一眼就能扫到。
 
     ``label`` 为空时不挂小标签（整块只剩这一句时，块级标签已经写过同样的话）。
     """
     chip = (
-        f'<span style="display:inline-block;background:{ACCENT};color:{HEADLINE_BG};'
+        f'<span style="display:inline-block;background:{ACCENT};color:{ACCENT_TEXT};'
         f'border-radius:3px;padding:1px 6px;margin-right:7px;font-size:11px;'
         f'font-weight:700;vertical-align:1px;">{label}</span>'
         if label
@@ -256,7 +265,7 @@ def _quote_line(item: Item) -> str:
     )
     return (
         f'<div style="font-size:12px;margin-top:4px;">'
-        f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+        f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT_TEXT};'
         f'border-radius:3px;padding:1px 6px;margin-right:6px;font-size:11px;font-weight:700;">'
         f"现价</span>"
         f"{label_html}"
@@ -333,7 +342,7 @@ _SECURITY_ANALYSIS_MARK = re.compile(
     r"|核心快讯|关键要素|发展脉络"
     r"|板块|概念|相似观点|看多|看空|逻辑)】"
 )
-#: 多维推演里的情景概率：偏多用 A 股红、偏空用绿，与涨跌幅的配色保持一致。
+#: 多维推演里的概率沿用黑白灰阶；方向由「偏多/偏空」文字表达，不依赖红绿。
 _PROB_UP = re.compile(r"(偏多\s*)(\d{1,3}\s*[%％])")
 _PROB_DOWN = re.compile(r"(偏空\s*)(\d{1,3}\s*[%％])")
 
@@ -405,7 +414,7 @@ def _ai_block(item: Item) -> str:
         f'<div style="font-size:13px;color:{NAVY};margin-top:6px;line-height:1.7;'
         f'background:{SURFACE_ALT};border-radius:5px;padding:6px 8px;">'
         f'<div style="margin-bottom:4px;">'
-        f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+        f'<span style="display:inline-block;background:{ACCENT_BG};color:{ACCENT_TEXT};'
         f'border-radius:3px;padding:1px 6px;font-size:11px;font-weight:700;">'
         f"{label}</span></div>"
         f"{rows}</div>"
@@ -472,7 +481,7 @@ def render_title(total: int, ref: datetime, top: Item | None) -> str:
 
 # ---------------------------------------------------------------------------
 # 手动主题分析推送：人工录入 AI 分析内容，直接渲染成一条独立推送。
-# 与抓取推送共用同一套浅灰底 + 深蓝字样式，但不经过时间校验与去重。
+# 与抓取推送共用 300×400 黑白卡片布局，但不经过时间校验与去重。
 # ---------------------------------------------------------------------------
 
 
@@ -504,9 +513,38 @@ def render_manual(
     if markdown:
         cards.extend(_markdown_cards(body_title, content))
     else:
-        cards.append(_manual_card(body_title, content))
+        chunks = _split_card_text(content)
+        cards.extend(
+            _manual_card(body_title if index == 0 else f"{body_title}（续 {index + 1}）", chunk)
+            for index, chunk in enumerate(chunks)
+        )
     cards.append(_manual_footer())
     return _document(cards)
+
+
+def _split_card_text(text: str, max_chars: int = 250) -> list[str]:
+    """按适合 300×400 屏幕的文本量切页，优先在段落/句子边界换页。"""
+    remaining = (text or "").strip()
+    if not remaining:
+        return [""]
+    chunks: list[str] = []
+    boundaries = "\n。！？；.!?;，, "
+    while len(remaining) > max_chars:
+        cut = max_chars
+        lower_bound = int(max_chars * 0.65)
+        candidates = [remaining.rfind(mark, lower_bound, max_chars + 1) for mark in boundaries]
+        best = max(candidates, default=-1)
+        if best >= lower_bound:
+            cut = best + 1
+        chunk = remaining[:cut].strip()
+        if not chunk:
+            chunk = remaining[:max_chars].strip()
+            cut = max_chars
+        chunks.append(chunk)
+        remaining = remaining[cut:].strip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 def _manual_header(topic: str, ai_model: str = "") -> str:
@@ -643,7 +681,7 @@ def _inline_markdown(value: str) -> str:
             return label
         url = html.escape(raw_url, quote=True)
         return protect(
-            f'<a href="{url}" style="background:{ACCENT_BG};color:{ACCENT};'
+            f'<a href="{url}" style="background:{ACCENT_BG};color:{ACCENT_TEXT};'
             f'padding:1px 5px;border-radius:3px;text-decoration:none;">{label}</a>'
         )
 
@@ -655,7 +693,7 @@ def _inline_markdown(value: str) -> str:
     )
     escaped = re.sub(
         r"~~(.+?)~~",
-        r'<span style="text-decoration:line-through;opacity:.7;">\1</span>',
+        r'<span style="text-decoration:line-through;">\1</span>',
         escaped,
     )
     for key, fragment in tokens.items():
@@ -678,7 +716,7 @@ def _split_table_row(line: str) -> list[str]:
 def _render_table(rows: list[list[str]]) -> str:
     width = max((len(r) for r in rows), default=1)
     normalized = [r + [""] * (width - len(r)) for r in rows]
-    min_width = min(760, max(300, width * 125))
+    min_width = min(274, max(120, width * 60))
     head = "".join(
         f'<th style="background:{ACCENT_WASH};color:{NAVY_DEEP};font-weight:700;'
         f'padding:6px;border:1px solid {BORDER};text-align:left;vertical-align:top;">'
@@ -799,7 +837,7 @@ def _markdown_blocks(text: str) -> list[_MarkdownBlock]:
                 items.append(
                     f'<div style="padding:3px 0 3px {left}px;">'
                     f'<span style="display:inline-block;width:24px;box-sizing:border-box;'
-                    f'margin-left:-24px;background:{ACCENT_BG};color:{ACCENT};'
+                    f'margin-left:-24px;background:{ACCENT_BG};color:{ACCENT_TEXT};'
                     f'padding:1px 5px;border-radius:3px;text-align:center;'
                     f'font-weight:700;">'
                     f'{html.escape(symbol)}</span>'
@@ -833,21 +871,25 @@ def _markdown_blocks(text: str) -> list[_MarkdownBlock]:
                 break
             paragraph.append(candidate.strip())
             i += 1
-        value = "<br>".join(_inline_markdown(part) for part in paragraph)
-        # 大模型常用【模块名】作行首标题，单独强调，避免所有文字挤成一团。
-        value = re.sub(
-            r"^【([^】]+)】\s*",
-            rf'<strong style="background:{ACCENT_BG};color:{ACCENT};'
-            rf'padding:1px 6px;border-radius:3px;">【\1】</strong> ',
-            value,
-        )
-        blocks.append(
-            _MarkdownBlock(
-                "paragraph",
-                f'<div style="font-size:14px;color:{NAVY};margin:7px 0;line-height:1.75;">'
-                f"{value}</div>",
+        paragraph_text = "\n".join(paragraph)
+        for paragraph_chunk in _split_card_text(paragraph_text, max_chars=190):
+            value = "<br>".join(
+                _inline_markdown(part) for part in paragraph_chunk.splitlines()
             )
-        )
+            # 大模型常用【模块名】作行首标题，单独强调，避免所有文字挤成一团。
+            value = re.sub(
+                r"^【([^】]+)】\s*",
+                rf'<strong style="background:{ACCENT_BG};color:{ACCENT_TEXT};'
+                rf'padding:1px 6px;border-radius:3px;">【\1】</strong> ',
+                value,
+            )
+            blocks.append(
+                _MarkdownBlock(
+                    "paragraph",
+                    f'<div style="font-size:13px;color:{NAVY};margin:5px 0;line-height:1.55;">'
+                    f"{value}</div>",
+                )
+            )
     return blocks
 
 
@@ -880,7 +922,8 @@ def _markdown_cards(
     skipping = False
     first_heading = True
     section_started = not drop_preamble
-    max_card_chars = 16000
+    # 卡片正文按实际可见字符数限量，而不是按含大量内联样式的 HTML 字符数计算。
+    max_card_chars = 210
 
     def flush() -> None:
         nonlocal current, current_size, continuation
@@ -908,10 +951,12 @@ def _markdown_cards(
         first_heading = False
         if skipping or not section_started:
             continue
-        if current and current_size + len(block.rendered) > max_card_chars:
+        visible_text = html.unescape(re.sub(r"<[^>]+>", "", block.rendered))
+        block_size = len(visible_text)
+        if current and current_size + block_size > max_card_chars:
             flush()
         current.append(block.rendered)
-        current_size += len(block.rendered)
+        current_size += block_size
     flush()
     return cards or [_manual_card(fallback_title, content)]
 
@@ -985,7 +1030,7 @@ def render_merge(
             f'margin-bottom:10px;">'
             f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};">'
             f"章鱼 AI · 合并研报</div>"
-            f'<div style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+            f'<div style="display:inline-block;background:{ACCENT_BG};color:{ACCENT_TEXT};'
             f'padding:2px 8px;border-radius:4px;font-size:16px;font-weight:600;'
             f'margin-top:6px;">{html.escape(topic)}</div>'
             f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:6px;">'
@@ -1015,18 +1060,18 @@ def render_manual_title(topic: str, ref: datetime) -> str:
 
 # ---------------------------------------------------------------------------
 # 主题因子分析推送：输入主题 -> 监管 + qlib 因子模型 -> AI 报告
-# 沿用同一套浅灰底 + 深蓝字样式，结构上分为：
+# 沿用同一套 300×400 黑白卡片布局，结构上分为：
 #   概览卡（主题/板块/数据日期）→ 因子雷达（维度评分表）→ AI 解读
 #   → 监管视角 → 数据溯源与合规声明
 # ---------------------------------------------------------------------------
 
 #: 因子维度评分的配色档位
 _SCORE_COLORS = (
-    (70.0, "#b3261e"),   # A股红涨：高分用红
-    (55.0, "#c2681b"),
-    (45.0, "#5a6f8c"),
-    (30.0, "#2c6b4f"),
-    (0.0, "#1b5e20"),    # 低分绿
+    (70.0, "#111111"),   # 高分：黑
+    (55.0, "#333333"),
+    (45.0, "#555555"),
+    (30.0, "#777777"),
+    (0.0, "#999999"),    # 低分：浅灰
 )
 
 
@@ -1071,7 +1116,7 @@ def _theme_header(analysis, ref: datetime) -> str:
         f'margin-bottom:12px;">'
         f'<div style="font-size:19px;font-weight:700;color:{NAVY_DEEP};'
         f'letter-spacing:.5px;">章鱼 AI · 主题因子分析</div>'
-        f'<div style="display:inline-block;background:{ACCENT_BG};color:{ACCENT};'
+        f'<div style="display:inline-block;background:{ACCENT_BG};color:{ACCENT_TEXT};'
         f'padding:2px 8px;border-radius:4px;font-size:16px;font-weight:600;'
         f'margin-top:6px;">{topic}</div>'
         f'<div style="font-size:12px;color:{NAVY_SOFT};margin-top:6px;">'
@@ -1109,7 +1154,7 @@ def _theme_overview(analysis) -> str:
     rows.append(("行情截至", data_freshness(analysis.data_date, ref=analysis.ref)))
 
     level = analysis.supervision.risk_level
-    level_color = {"高": RED, "中": "#c2681b", "偏低": NAVY_SOFT}.get(level, GREEN)
+    level_color = {"高": RED, "中": "#333333", "偏低": NAVY_SOFT}.get(level, GREEN)
     sup = analysis.supervision
     rows.append(
         (
@@ -1227,7 +1272,7 @@ def _theme_ai_card(analysis) -> str:
     body = _rich_text(analysis.ai_report)
     return (
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
-        f'border-left:4px solid #1b5e20;border-radius:8px;padding:12px 14px;'
+        f'border-left:4px solid #111111;border-radius:8px;padding:12px 14px;'
         f'margin-bottom:12px;">'
         f'<div style="font-size:16px;font-weight:700;color:{NAVY_DEEP};'
         f'padding-bottom:7px;margin-bottom:10px;border-bottom:2px solid {BORDER};">'
@@ -1240,7 +1285,7 @@ def _theme_ai_card(analysis) -> str:
 def _theme_supervision_card(analysis) -> str:
     sup = analysis.supervision
     level = sup.risk_level
-    level_color = {"高": RED, "中": "#c2681b", "偏低": NAVY_SOFT}.get(level, GREEN)
+    level_color = {"高": RED, "中": "#333333", "偏低": NAVY_SOFT}.get(level, GREEN)
 
     lines: list[str] = [
         f'<div style="font-size:13px;margin-bottom:6px;">'
@@ -1293,7 +1338,7 @@ def _theme_supervision_card(analysis) -> str:
 
 
 def _supervision_row(event, *, index: int = 0) -> str:
-    color = RED if event.severity >= 85 else ("#c2681b" if event.severity >= 65 else NAVY_SOFT)
+    color = RED if event.severity >= 85 else ("#333333" if event.severity >= 65 else NAVY_SOFT)
     title = html.escape(event.title)
     if event.url:
         title = (

@@ -50,10 +50,9 @@ sources:
     mover_top: 6
     dblow_top: 5        # 双低榜取前几只
 
-# PushPlus 群组推送（一对多）支持多个 topic，逗号分隔或列表
-pushplus_topics: oai.1
-# pushplus_topics: ["oai.1", "another-group"]
-# 留空则只推送给自己（单人模式）
+# 所有推送固定为一对一，只发送给 PUSHPLUS_TOKEN 所属账号本人。
+# 为兼容旧配置仍识别 pushplus_topics，但不会发送群组 topic。
+pushplus_topics: []
 
 # DeepSeek 大模型（选填）：以「证券分析专家」身份逐条生成
 # 事件重塑 / 利弊挖掘 / 深度溯源 / 多维推演（含偏多偏空概率）/ 事实核查

@@ -175,7 +175,7 @@ class Config:
 
     @staticmethod
     def _load_pushplus_topics(data: dict) -> list[str]:
-        """Load pushplus_topics from env or config (supports comma separated or list)."""
+        """兼容读取旧群组配置；当前推送链路固定一对一，不会使用该字段。"""
         env_topics = os.getenv("PUSHPLUS_TOPICS", "")
         if env_topics:
             return [t.strip() for t in env_topics.split(",") if t.strip()]

@@ -27,10 +27,11 @@ git push
 | Name | Value | 必填 |
 |---|---|---|
 | `PUSHPLUS_TOKEN` | `26614f5b8a874aab9ad4791555079520` | ✅ |
-| `PUSHPLUS_TOPIC` | 群组编码，只发给自己就不用建 | ❌ |
 | `DATAYES_TOKEN` | 萝卜投研 Cloud-Sso-Token | ❌ |
 | `DEEPSEEK_API_KEY` | DeepSeek API Key（定时情报逐条证券分析：事件重塑/利弊挖掘/深度溯源/多维推演含偏多偏空概率/事实核查；另用于手动主题提炼） | ❌ |
 | `DEEPSEEK_MODEL` | DeepSeek 模型名（默认 `deepseek-v4-flash`） | ❌ |
+
+所有推送固定为一对一：只发送给 `PUSHPLUS_TOKEN` 所属账号，不设置或传入群组 topic；旧的 `PUSHPLUS_TOPIC` Secret 无需配置。
 
 > 主题因子分析用的 `GITHUB_TOKEN` 无需手工配置，Actions 会自动注入内置 token；
 > 它只用于提高读取 microsoft/qlib 公共仓库的 API 限额。
