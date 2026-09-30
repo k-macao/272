@@ -893,7 +893,7 @@ class TestRenderNewsEnrichment(unittest.TestCase):
         self.assertIn(">AI 一句话</span>", html)
         self.assertIn(">AI 分析</span>", html)
         self.assertIn("公司自己掏钱回购，等于管理层觉得现在不贵。", html)
-        self.assertIn("#1c1f23", html)  # 一句人话仍用深底高亮
+        self.assertIn("background:#111111", html)  # 一句人话用黑底白字高亮
         # 合并块整体在新闻最后：一句话在现价与多源之后，块级标签在两句正文之前
         self.assertLess(html.index(">现价</span>"), html.index(">AI 一句话</span>"))
         self.assertLess(html.index(">AI 分析</span>"), html.index(">AI 一句话</span>"))
@@ -985,9 +985,9 @@ class TestRenderNewsEnrichment(unittest.TestCase):
             self.assertIn(label, html)
         self.assertIn("偏多", html)
         self.assertIn("偏空", html)
-        # 概率本身按 A 股配色高亮：偏多红、偏空绿
-        self.assertIn('#a63a2b;font-weight:700;">58%</span>', html)
-        self.assertIn('#2c6b4f;font-weight:700;">42%</span>', html)
+        # 概率只用黑白高亮，灰阶屏不会把红绿显示成近似灰色。
+        self.assertIn('#111111;font-weight:700;">58%</span>', html)
+        self.assertIn('#111111;font-weight:700;">42%</span>', html)
 
     def test_down_move_uses_green(self):
         item = _item("某股跳水")
@@ -996,7 +996,7 @@ class TestRenderNewsEnrichment(unittest.TestCase):
         item.price_code = "000001"
         html = self._html(item)
         self.assertIn("-3.20%", html)
-        self.assertIn("#2c6b4f", html)  # GREEN
+        self.assertIn("#111111", html)  # monochrome status color
 
 
 if __name__ == "__main__":

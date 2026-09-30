@@ -40,26 +40,27 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>章鱼 AI 全景分析 · 推送台</title>
 <style>
-  body{margin:0;background:#d2d5d8;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Helvetica,Arial,sans-serif;color:#111111;}
-  .wrap{max-width:720px;margin:0 auto;padding:20px 14px 40px;}
-  .card{background:#eceef0;border:1px solid #a4a9ae;border-left:6px solid #b7ff26;border-radius:8px;padding:14px 16px;margin-bottom:12px;}
-  h1{display:inline-block;font-size:20px;line-height:1.2;color:#090909;background:#edf8d1;border:1px solid #b7ff26;margin:0 0 6px;padding:4px 10px;border-radius:4px;letter-spacing:.6px;}
+  body{margin:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Helvetica,Arial,sans-serif;color:#111111;}
+  .wrap{max-width:340px;margin:0 auto;padding:20px 14px 40px;}
+  .card{background:#ffffff;border:1px solid #111111;border-left:4px solid #111111;border-radius:8px;padding:14px 16px;margin-bottom:12px;}
+  h1{display:inline-block;font-size:20px;line-height:1.2;color:#000000;background:#eeeeee;border:1px solid #111111;margin:0 0 6px;padding:4px 10px;border-radius:4px;letter-spacing:.6px;}
   .sub{font-size:12px;color:#111111;margin-bottom:12px;line-height:1.7;}
   label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;letter-spacing:.2px;}
-  input[type=text],textarea{width:100%;box-sizing:border-box;border:1px solid #a4a9ae;border-radius:6px;padding:8px 10px;font-size:13px;color:#111111;background:#f5f6f7;}
+  input[type=text],textarea{width:100%;box-sizing:border-box;border:1px solid #111111;border-radius:6px;padding:8px 10px;font-size:13px;color:#111111;background:#ffffff;}
   textarea{min-height:220px;resize:vertical;line-height:1.75;}
   input[type=text]{height:36px;}
-  .row{display:flex;gap:10px;margin-top:14px;}
-  button{flex:1;border:0;border-radius:6px;padding:11px 0;font-size:13px;font-weight:700;cursor:pointer;}
-  #btnPreview{background:#edf8d1;color:#111111;}
-  #btnPush{background:#202327;color:#b7ff26;}
-  #status{font-size:12px;margin-top:10px;color:#5b5f64;min-height:18px;}
-  #status.ok{color:#2c6b4f;}
-  #status.err{color:#a63a2b;}
-  .token-note{font-size:12px;color:#5b5f64;margin-top:8px;line-height:1.7;}
-  .p-title{font-size:13px;font-weight:700;color:#090909;margin:14px 0 8px;letter-spacing:.2px;}
-  #preview{border:1px solid #a4a9ae;border-radius:8px;overflow:hidden;background:#d2d5d8;}
-  #frame{width:100%;min-height:320px;border:0;background:#d2d5d8;display:block;}
+  .row{margin-top:14px;}
+  button{display:block;width:100%;box-sizing:border-box;border:1px solid #111111;border-radius:4px;padding:11px 0;font-size:13px;font-weight:700;cursor:pointer;}
+  button+button{margin-top:8px;}
+  #btnPreview{background:#eeeeee;color:#111111;border:1px solid #111111;}
+  #btnPush{background:#111111;color:#ffffff;}
+  #status{font-size:12px;margin-top:10px;color:#444444;min-height:18px;}
+  #status.ok{color:#111111;}
+  #status.err{color:#111111;font-weight:700;}
+  .token-note{font-size:12px;color:#444444;margin-top:8px;line-height:1.7;}
+  .p-title{font-size:13px;font-weight:700;color:#000000;margin:14px 0 8px;letter-spacing:.2px;}
+  #preview{width:300px;max-width:100%;margin:0 auto;border:1px solid #111111;overflow:hidden;background:#ffffff;}
+  #frame{width:100%;height:400px;border:0;background:#ffffff;display:block;}
 </style>
 </head>
 <body>
@@ -70,7 +71,7 @@ PAGE = """<!doctype html>
     <label for="topic">分析主题（可选）</label>
     <input type="text" id="topic" placeholder="例如：AI 应用全景、机器人板块、海外模型动态">
     <label for="content">分析正文（必填）</label>
-    <textarea id="content" placeholder="粘贴或输入分析全文，支持多行；页面会自动渲染成适合微信阅读的竖版长页……"></textarea>
+    <textarea id="content" placeholder="粘贴或输入分析全文；预览和推送会自动排成 300×400 黑白卡片页……"></textarea>
     <div class="row">
       <button id="btnPreview" type="button">预览效果</button>
       <button id="btnPush" type="button">发送推送</button>

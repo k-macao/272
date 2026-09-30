@@ -55,12 +55,13 @@ def make_source(source_name, label, titles, fail=False):
 
 
 class RecordingPush:
-    """替换掉真实 PushPlus，记录调用。"""
+    """替换掉真实 PushPlus，记录调用与推送目标。"""
 
     sent: list[tuple[str, str]] = []
+    instances: list[dict] = []
 
     def __init__(self, *args, **kwargs):
-        pass
+        RecordingPush.instances.append(kwargs)
 
     def send(self, title, content, dry_run=False):
         RecordingPush.sent.append((title, content))
@@ -80,6 +81,7 @@ class AgentTestCase(unittest.TestCase):
         self._registry_backup = dict(REGISTRY)
         REGISTRY.clear()
         RecordingPush.sent = []
+        RecordingPush.instances = []
 
     def tearDown(self):
         REGISTRY.clear()
@@ -117,6 +119,11 @@ class AgentTestCase(unittest.TestCase):
 
 
 class TestAgentFlow(AgentTestCase):
+    def test_all_pushes_are_personal_even_with_legacy_group_config(self):
+        agent = self._agent(self._config(pushplus_topics=["old-group"]))
+        self.assertTrue(agent._push("title", "<div>content</div>", dry_run=False))
+        self.assertEqual(RecordingPush.instances[-1]["topics"], [])
+
     def test_collects_from_all_sources(self):
         REGISTRY["a"] = make_source("a", "源A", ["A新闻1", "A新闻2"])
         REGISTRY["b"] = make_source("b", "源B", ["B新闻1"])
@@ -279,8 +286,9 @@ class TestAgentFlow(AgentTestCase):
     def test_html_output_is_styled(self):
         REGISTRY["a"] = make_source("a", "源A", ["宁德时代回购"])
         report = self._agent(self._config()).run_once(ref=REF)
-        self.assertIn("#eceef0", report.html)  # 浅灰卡片底
-        self.assertIn("#111111", report.html)  # 正文主色
+        self.assertIn("#ffffff", report.html)  # 墨水屏白底
+        self.assertIn("width:300px;max-width:100%;min-height:400px", report.html)
+        self.assertIn("#111111", report.html)  # 黑色正文与边框
         self.assertIn("宁德时代回购", report.html)
         self.assertIn(">分析</span>", report.html)  # 无 API Key 时规则化分析
 
