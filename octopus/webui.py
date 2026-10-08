@@ -38,59 +38,109 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>章鱼 AI 全景分析 · 推送台</title>
+<title>C:\\OCTOPUS\\MANUAL.EXE · 章鱼 AI 推送台</title>
 <style>
-  body{margin:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Helvetica,Arial,sans-serif;color:#111111;}
-  .wrap{max-width:340px;margin:0 auto;padding:20px 14px 40px;}
-  .card{background:#ffffff;border:1px solid #111111;border-left:4px solid #111111;border-radius:8px;padding:14px 16px;margin-bottom:12px;}
-  h1{display:inline-block;font-size:20px;line-height:1.2;color:#000000;background:#eeeeee;border:1px solid #111111;margin:0 0 6px;padding:4px 10px;border-radius:4px;letter-spacing:.6px;}
-  .sub{font-size:12px;color:#111111;margin-bottom:12px;line-height:1.7;}
-  label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;letter-spacing:.2px;}
-  input[type=text],textarea{width:100%;box-sizing:border-box;border:1px solid #111111;border-radius:6px;padding:8px 10px;font-size:13px;color:#111111;background:#ffffff;}
-  textarea{min-height:220px;resize:vertical;line-height:1.75;}
-  input[type=text]{height:36px;}
-  .row{margin-top:14px;}
-  button{display:block;width:100%;box-sizing:border-box;border:1px solid #111111;border-radius:4px;padding:11px 0;font-size:13px;font-weight:700;cursor:pointer;}
-  button+button{margin-top:8px;}
-  #btnPreview{background:#eeeeee;color:#111111;border:1px solid #111111;}
-  #btnPush{background:#111111;color:#ffffff;}
-  #status{font-size:12px;margin-top:10px;color:#444444;min-height:18px;}
-  #status.ok{color:#111111;}
-  #status.err{color:#111111;font-weight:700;}
-  .token-note{font-size:12px;color:#444444;margin-top:8px;line-height:1.7;}
-  .p-title{font-size:13px;font-weight:700;color:#000000;margin:14px 0 8px;letter-spacing:.2px;}
-  #preview{width:300px;max-width:100%;margin:0 auto;border:1px solid #111111;overflow:hidden;background:#ffffff;}
-  #frame{width:100%;height:400px;border:0;background:#ffffff;display:block;}
+  /* DOS / CRT 监视器皮肤：黑屏、磷光绿、等宽字、直角窗口 + 标题栏。
+     页面不固定尺寸：宽度 100% 跟随设备，高度由内容撑开。 */
+  :root{
+    --ink:#c8f0c8;--bright:#ffffff;--dim:#63a86f;--faint:#3f7a4c;
+    --phos:#3dff82;--border:#1f7a3c;--soft:#123f22;--panel:#0b120c;
+    --bar:#0f2a17;--glass:#05100a;--amber:#ffb000;--red:#ff5f5f;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:#000;}
+  body{
+    color:var(--ink);font-size:15px;line-height:1.75;letter-spacing:.2px;
+    font-family:'Courier New',Courier,'Lucida Console','NSimSun','SimSun',monospace;
+    text-shadow:0 0 3px rgba(61,255,130,.35);padding:16px 13px 56px;
+  }
+  /* 扫描线 + 四角暗角：整块屏幕的滤镜，压在内容下层，不影响点选 */
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:99;
+    background:
+      radial-gradient(125% 125% at 50% 50%,rgba(0,0,0,0) 55%,rgba(0,0,0,.7) 100%),
+      repeating-linear-gradient(180deg,rgba(0,0,0,.45) 0px,rgba(0,0,0,.45) 1px,rgba(0,0,0,0) 1px,rgba(0,0,0,0) 3px);
+  }
+  .wrap{width:100%;}
+  .win{background:var(--panel);border:1px solid var(--border);overflow:hidden;
+       margin-bottom:16px;box-shadow:inset 0 0 26px rgba(0,0,0,.75),0 0 12px rgba(61,255,130,.12);}
+  .bar{display:flex;justify-content:space-between;align-items:center;gap:10px;
+        background:var(--bar);border-bottom:1px solid var(--border);padding:4px 8px;
+        font-size:12px;letter-spacing:.8px;color:#7dffa8;font-weight:700;}
+  .bar .btns span{display:inline-block;background:#7dffa8;color:#070b08;padding:0 5px;margin-left:4px;font-size:10px;}
+  .pad{padding:14px 15px 16px;}
+  h1{font-size:26px;line-height:1.3;margin:0;color:var(--bright);letter-spacing:1px;}
+  h1 .dot{color:var(--phos);}
+  .sub{font-size:13px;color:var(--dim);margin-top:8px;line-height:1.8;}
+  label{display:block;font-size:12px;letter-spacing:1px;color:var(--faint);margin:16px 0 5px;}
+  input[type=text],textarea{width:100%;background:var(--glass);border:1px solid var(--border);
+    border-radius:0;color:var(--bright);padding:9px 11px;
+    font-family:inherit;font-size:15px;line-height:1.7;text-shadow:0 0 3px rgba(61,255,130,.3);}
+  input[type=text]:focus,textarea:focus{outline:0;border-color:var(--phos);
+    box-shadow:0 0 0 1px var(--phos),0 0 14px rgba(61,255,130,.25);}
+  textarea{min-height:38vh;resize:vertical;line-height:1.8;}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;}
+  button{flex:1 1 180px;background:#12331f;color:#7dffa8;border:1px solid var(--border);
+    border-radius:0;font-family:inherit;font-size:15px;font-weight:700;letter-spacing:1px;
+    padding:11px 0;cursor:pointer;
+    box-shadow:inset 2px 2px 0 rgba(125,255,168,.22),inset -2px -2px 0 rgba(0,0,0,.6);}
+  button:hover{background:var(--phos);color:#03130a;}
+  button:active{box-shadow:inset -2px -2px 0 rgba(125,255,168,.2),inset 2px 2px 0 rgba(0,0,0,.6);}
+  #btnPush{background:var(--phos);color:#03130a;}
+  #btnPush:hover{background:#7dffa8;}
+  #status{font-size:13px;margin-top:12px;min-height:20px;color:var(--dim);white-space:pre-wrap;}
+  #status.ok{color:var(--phos);}
+  #status.err{color:var(--red);}
+  .token-note{font-size:12px;color:var(--amber);margin-top:10px;line-height:1.7;}
+  .p-title{font-size:12px;letter-spacing:1px;color:var(--faint);margin:20px 2px 8px;}
+  /* 预览窗：宽度跟随窗口，高度按正文自动撑开，不再锁死成 300×400 */
+  #preview{width:100%;background:#070b08;border:1px solid var(--border);
+    box-shadow:inset 0 0 26px rgba(0,0,0,.8),0 0 14px rgba(61,255,130,.12);}
+  #frame{width:100%;height:auto;min-height:40vh;border:0;display:block;background:#070b08;}
+  .cursor{display:inline-block;width:9px;height:15px;background:var(--phos);
+    vertical-align:-2px;margin-left:5px;animation:blink 1.1s steps(1,end) infinite;}
+  @keyframes blink{50%{opacity:0}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="card">
-    <h1>章鱼 AI 全景分析</h1>
-    <div class="sub">全网 AI 调研境内境外数据，由多个大模型混合部署。<br>这里用于录入正文、预览微信长页效果，并一对一发送到 token 所属账号，不走群组。</div>
-    <label for="topic">分析主题（可选）</label>
-    <input type="text" id="topic" placeholder="例如：AI 应用全景、机器人板块、海外模型动态">
-    <label for="content">分析正文（必填）</label>
-    <textarea id="content" placeholder="粘贴或输入分析全文；预览和推送会自动排成 300×400 黑白卡片页……"></textarea>
-    <div class="row">
-      <button id="btnPreview" type="button">预览效果</button>
-      <button id="btnPush" type="button">发送推送</button>
-    </div>
-    <div id="status"></div>
-    <div class="token-note" id="tokenNote" style="display:none;">此服务启用了访问令牌，推送前需填写：<br>
-      <input type="text" id="token" placeholder="访问令牌（OCTOPUS_WEB_TOKEN）" style="height:34px;margin-top:6px;">
+  <div class="win">
+    <div class="bar"><span>C:\\OCTOPUS\\MANUAL.EXE</span><span class="btns"><span>_</span><span>□</span><span>×</span></span></div>
+    <div class="pad">
+      <h1><span class="dot">█</span> 章鱼 AI 全景分析</h1>
+      <div class="sub">全网 AI 调研境内境外数据，由多个大模型混合部署。<br>这里用于录入正文、预览微信长页效果，并一对一发送到 token 所属账号，不走群组。</div>
+      <label for="topic">&gt; 分析主题（可选）</label>
+      <input type="text" id="topic" placeholder="例如：AI 应用全景、机器人板块、海外模型动态">
+      <label for="content">&gt; 分析正文（必填）</label>
+      <textarea id="content" placeholder="粘贴或输入分析全文；预览与推送都会排成自适应宽度的 DOS 终端页……"></textarea>
+      <div class="row">
+        <button id="btnPreview" type="button">F2 · 预览效果</button>
+        <button id="btnPush" type="button">F9 · 发送推送</button>
+      </div>
+      <div id="status"></div>
+      <div class="token-note" id="tokenNote" style="display:none;">此服务启用了访问令牌，推送前需填写：<br>
+        <input type="text" id="token" placeholder="访问令牌（OCTOPUS_WEB_TOKEN）" style="margin-top:6px;">
+      </div>
     </div>
   </div>
-  <div class="p-title">推送预览（与微信收到的渲染效果一致）</div>
+  <div class="p-title">&gt; 推送预览（与微信收到的渲染效果一致）<span class="cursor"></span></div>
   <div id="preview"><iframe id="frame" title="预览"></iframe></div>
 </div>
 <script>
 (function () {
   var AUTH = __AUTH__;
   if (AUTH) document.getElementById('tokenNote').style.display = 'block';
+  var frame = document.getElementById('frame');
   function setStatus(text, cls) {
     var s = document.getElementById('status');
     s.textContent = text; s.className = cls || '';
+  }
+  function fit() {  // 预览窗高度跟着正文走，不裁内容
+    try {
+      var doc = frame.contentDocument || frame.contentWindow.document;
+      var h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight) + 24;
+      frame.style.height = h + 'px';
+    } catch (e) { /* 跨域读不到就算了，min-height 兜着 */ }
   }
   function body() {
     var p = {
@@ -105,23 +155,33 @@ PAGE = """<!doctype html>
     fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body() })
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        if (!d.ok && d.message) { setStatus(d.message, 'err'); return; }
+        if (!d.ok && d.message) { setStatus('! ' + d.message, 'err'); return; }
         done(d);
       })
-      .catch(function (e) { setStatus('请求失败：' + e, 'err'); });
+      .catch(function (e) { setStatus('! 请求失败：' + e, 'err'); });
   }
-  document.getElementById('btnPreview').addEventListener('click', function () {
+  function preview() {
     post('/preview', function (d) {
-      document.getElementById('frame').srcdoc = d.html;
-      setStatus('预览已更新', 'ok');
+      frame.removeAttribute('srcdoc');
+      frame.srcdoc = d.html;
+      frame.onload = fit;
+      setTimeout(fit, 60);
+      setStatus('OK 预览已更新', 'ok');
     });
-  });
-  document.getElementById('btnPush').addEventListener('click', function () {
+  }
+  function push() {
     post('/push', function (d) {
-      if (d.ok) setStatus('一对一推送成功：' + d.title, 'ok');
-      else setStatus(d.message || '推送失败', 'err');
+      if (d.ok) setStatus('OK 一对一推送成功：' + d.title, 'ok');
+      else setStatus('! ' + (d.message || '推送失败'), 'err');
     });
+  }
+  document.getElementById('btnPreview').addEventListener('click', preview);
+  document.getElementById('btnPush').addEventListener('click', push);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'F2') { e.preventDefault(); preview(); }
+    if (e.key === 'F9') { e.preventDefault(); push(); }
   });
+  setStatus('C:\\\\OCTOPUS> manual.exe /READY  （F2 预览 · F9 推送）', 'ok');
 })();
 </script>
 </body>

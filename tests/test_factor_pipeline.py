@@ -27,6 +27,7 @@ from octopus.factor.market import (
 from octopus.factor.pipeline import ThemePipeline, build_facts, rule_based_report
 from octopus.http import FetchError
 from octopus.render import (
+    BORDER_SOFT,
     PUSH_TITLE,
     ROW_BG_A,
     ROW_BG_B,
@@ -563,11 +564,26 @@ class TestRenderTheme(PipelineTestCase):
     def test_supervision_rows_alternate_backgrounds(self):
         """监管事件列表里前后两条底色同样一深一浅，清晰分得开。"""
         self.assertIn(
-            f"background:{ROW_BG_A};border-radius:6px;padding:6px 8px;", self.html
+            f"background:{ROW_BG_A};border:1px solid {BORDER_SOFT};padding:6px 8px;",
+            self.html,
         )
         self.assertIn(
-            f"background:{ROW_BG_B};border-radius:6px;padding:6px 8px;", self.html
+            f"background:{ROW_BG_B};border:1px solid {BORDER_SOFT};padding:6px 8px;",
+            self.html,
         )
+
+    def test_pages_are_not_fixed_size(self):
+        """推送页不固定尺寸：宽度跟随设备，正文多长就撑多高。"""
+        self.assertIn("width:100%;box-sizing:border-box", self.html)
+        self.assertNotIn("width:300px", self.html)
+        self.assertNotIn("min-height:400px", self.html)
+
+    def test_dos_chrome_is_present(self):
+        """CRT 外壳：等宽字体、黑屏、扫描线与窗口标题栏都在。"""
+        self.assertIn("Courier New", self.html)
+        self.assertIn("#000000", self.html)
+        self.assertIn("repeating-linear-gradient", self.html)
+        self.assertIn("█", self.html)   # ASCII 进度条与光标块
 
     def test_shows_disclaimer(self):
         self.assertIn("不构成", self.html)
