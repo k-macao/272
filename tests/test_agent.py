@@ -286,9 +286,10 @@ class TestAgentFlow(AgentTestCase):
     def test_html_output_is_styled(self):
         REGISTRY["a"] = make_source("a", "源A", ["宁德时代回购"])
         report = self._agent(self._config()).run_once(ref=REF)
-        self.assertIn("#ffffff", report.html)  # 墨水屏白底
-        self.assertIn("width:300px;max-width:100%;min-height:400px", report.html)
-        self.assertIn("#111111", report.html)  # 黑色正文与边框
+        self.assertIn("#000000", report.html)  # CRT 黑屏底
+        self.assertIn("width:100%;box-sizing:border-box", report.html)  # 宽度自适应
+        self.assertNotIn("width:300px", report.html)  # 不再是固定 300×400 页
+        self.assertIn("#1f7a3c", report.html)  # 磷光绿边框
         self.assertIn("宁德时代回购", report.html)
         self.assertIn(">分析</span>", report.html)  # 无 API Key 时规则化分析
 

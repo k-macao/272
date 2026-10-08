@@ -60,14 +60,19 @@ class TestRenderManual(unittest.TestCase):
         self.assertIn("▍正文", html)
         self.assertIn("纯内容文本", html)
 
-    def test_eink_layout_splits_long_plain_text_into_300_by_400_pages(self):
-        content = "这是一段需要在墨水屏分页显示的分析内容。" * 100
+    def test_dos_pages_are_fluid_and_split_long_plain_text(self):
+        """页面不固定尺寸（宽度跟随设备、高度随正文），长正文仍按页拆开排版。"""
+        content = "这是一段需要在终端分页显示的分析内容。" * 200
         rendered = render_manual("分页测试", content, ref=REF, markdown=False)
-        self.assertIn("width:300px;max-width:100%;min-height:400px", rendered)
-        self.assertGreater(rendered.count("min-height:400px"), 4)
+        self.assertNotIn("width:300px", rendered)          # 没有固定页宽
+        self.assertNotIn("min-height:400px", rendered)     # 没有固定页高
+        self.assertIn("width:100%;box-sizing:border-box", rendered)
+        self.assertIn("Courier New", rendered)             # DOS 等宽字体
+        self.assertIn("repeating-linear-gradient", rendered)   # CRT 扫描线
+        self.assertGreater(rendered.count("（续"), 2)
         self.assertIn("（续 2）", rendered)
         self.assertNotIn("#b7ff26", rendered)
-        self.assertIn("这是一段需要在墨水屏分页显示的分析内容。", rendered)
+        self.assertIn("这是一段需要在终端分页显示的分析内容。", rendered)
 
 
 class TestRenderManualTitle(unittest.TestCase):
@@ -338,7 +343,7 @@ class TestManualDeepSeekAI(unittest.TestCase):
 
         report = agent.push_manual("AI测试", "一大段复杂的分析内容……")
         self.assertTrue(report.pushed)
-        self.assertIn("✨ DeepSeek AI 智能提炼", report.html)
+        self.assertIn("DeepSeek AI 智能提炼", report.html)
         self.assertIn("【分类标签】：AI概念", report.html)
         self.assertIn("一大段复杂的分析内容……", report.html)
 
@@ -364,7 +369,7 @@ class TestManualDeepSeekAI(unittest.TestCase):
             ]
         }
         html = agent.preview_manual("半导体行业", "研报正文：订单显著上升")
-        self.assertIn("✨ DeepSeek AI 智能提炼", html)
+        self.assertIn("DeepSeek AI 智能提炼", html)
         self.assertIn("【分类标签】：半导体", html)
         self.assertIn("研报正文：订单显著上升", html)
 

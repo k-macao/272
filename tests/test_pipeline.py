@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from octopus.models import Item, SourceResult, TimeQuality
 from octopus.render import (
     CARD_BG,
+    HTML_BLOCK_SEPARATOR,
     PUSH_TITLE,
     ROW_BG_A,
     ROW_BG_B,
@@ -189,10 +190,31 @@ class TestRender(unittest.TestCase):
             self._groups(), total=2, window_minutes=180, ref=REF,
             failures=[], degraded=[],
         )
-        self.assertIn("#ffffff", html)   # 墨水屏白底
-        self.assertIn("width:300px;max-width:100%;min-height:400px", html)
-        self.assertIn("#111111", html)   # 黑色正文与边框
+        self.assertIn("#000000", html)             # CRT 黑屏
+        self.assertIn("#3dff82", html)             # 磷光绿描边与强调
+        self.assertIn("Courier New", html)         # 等宽字体
+        self.assertIn("width:100%;box-sizing:border-box", html)   # 宽度自适应，不固定页面
+        self.assertNotIn("width:300px", html)      # 不再裁成小屏卡片
+        self.assertNotIn("min-height:400px", html)
         self.assertIn("章鱼 AI", html)
+
+    def test_dos_crt_skin_is_applied(self):
+        """DOS 复古监视器皮肤：黑屏 + 磷光绿 + 等宽字 + 扫描线，直角无圆角。"""
+        html = render_html(
+            self._groups(), total=2, window_minutes=180, ref=REF,
+            failures=[], degraded=[],
+        )
+        self.assertIn("repeating-linear-gradient", html)   # CRT 扫描线
+        self.assertIn("text-shadow", html)                 # 磷光体荧光晕
+        self.assertIn("Courier New", html)                 # 等宽字体
+        self.assertIn("#c8f0c8", html)                     # 正文：偏白的磷光绿
+        self.assertIn("#3dff82", html)                     # 磷光绿强调 / 反白条
+        self.assertIn("█", html)                           # 光标块 / 标题块
+        self.assertNotIn("<style", html)                   # 微信会剥 <style>，只能内联
+        # 电子墨水屏那套灰阶配色已全部退场
+        for grey in ("#eeeeee", "#fafafa", "#e6e6e6", "#444444", "#111111"):
+            self.assertNotIn(grey, html)
+        self.assertEqual(set(re.findall(r"border-radius:(\w+)", html)), {"0"})
 
     def test_html_contains_items_and_times(self):
         html = render_html(
@@ -202,8 +224,8 @@ class TestRender(unittest.TestCase):
         self.assertIn("宁德时代拟回购400亿", html)
         self.assertIn("12分钟前", html)
         self.assertIn("07-27 10:18", html)
-        # 标题页、两条独立情报页与页脚页各自占一张卡片页。
-        self.assertEqual(html.count("min-height:400px"), 4)
+        # 标题页、两条独立情报页与页脚页各自占一扇终端窗口。
+        self.assertEqual(html.count(HTML_BLOCK_SEPARATOR), 3)
 
     def test_hides_all_source_section_headings_but_keeps_items(self):
         """来源标题整级隐藏：正文不出现任何同级来源标题，条目一条不少。"""
@@ -329,7 +351,7 @@ class TestRender(unittest.TestCase):
             failures=[], degraded=[],
         )
         return re.findall(
-            r"background:(#[0-9a-f]{6});border-radius:6px;padding:8px 10px;", html
+            r"background:(#[0-9a-f]{6});border:1px solid #[0-9a-f]{6};padding:8px 9px;", html
         )
 
     def test_adjacent_rows_use_alternating_backgrounds(self):
